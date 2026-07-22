@@ -1,0 +1,154 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "main",
+        "name": "Singapadu Jogging Loop",
+        "startRadiusMeters": 20,
+        "endFinishRadiusMeters": 30,
+        "offRouteThresholdMeters": 20,
+        "checkpoints": [
+          {
+            "id": "cp-1",
+            "name": "CP 1",
+            "lat": -8.5797866,
+            "lng": 115.2606812,
+            "routeIndex": 0,
+            "streetView": false
+          },
+          {
+            "id": "cp-2",
+            "name": "CP 2",
+            "lat": -8.5821805,
+            "lng": 115.2608551,
+            "routeIndex": 2,
+            "streetView": false
+          },
+          {
+            "id": "cp-3",
+            "name": "CP 3",
+            "lat": -8.5850807,
+            "lng": 115.261076,
+            "routeIndex": 4,
+            "streetView": true
+          },
+          {
+            "id": "cp-4",
+            "name": "CP 4",
+            "lat": -8.5849202,
+            "lng": 115.2597225,
+            "routeIndex": 5,
+            "streetView": false
+          },
+          {
+            "id": "cp-5",
+            "name": "CP 5",
+            "lat": -8.5848937,
+            "lng": 115.2575094,
+            "routeIndex": 6,
+            "streetView": true
+          },
+          {
+            "id": "cp-6",
+            "name": "CP 6",
+            "lat": -8.5838027,
+            "lng": 115.2574654,
+            "routeIndex": 8,
+            "streetView": false
+          },
+          {
+            "id": "cp-7",
+            "name": "CP 7",
+            "lat": -8.5806124,
+            "lng": 115.2575268,
+            "routeIndex": 12,
+            "streetView": false
+          },
+          {
+            "id": "cp-8",
+            "name": "CP 8",
+            "lat": -8.5795874,
+            "lng": 115.2579657,
+            "routeIndex": 15,
+            "streetView": true
+          }
+        ]
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            115.2606812,
+            -8.5797866
+          ],
+          [
+            115.2606946,
+            -8.5809775
+          ],
+          [
+            115.2608685,
+            -8.5823273
+          ],
+          [
+            115.2608083,
+            -8.5825589
+          ],
+          [
+            115.2611094,
+            -8.5850994
+          ],
+          [
+            115.2585066,
+            -8.5848745
+          ],
+          [
+            115.2574829,
+            -8.5848877
+          ],
+          [
+            115.2574829,
+            -8.5842327
+          ],
+          [
+            115.2575159,
+            -8.5838756
+          ],
+          [
+            115.2573754,
+            -8.5821025
+          ],
+          [
+            115.257536,
+            -8.58156
+          ],
+          [
+            115.2573821,
+            -8.5811167
+          ],
+          [
+            115.2574958,
+            -8.5806073
+          ],
+          [
+            115.2577968,
+            -8.580489
+          ],
+          [
+            115.257792,
+            -8.5801437
+          ],
+          [
+            115.2579556,
+            -8.5795851
+          ],
+          [
+            115.2606812,
+            -8.5797866
+          ]
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+services:
+  joging-track:
+    container_name: joging-track
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik"
+      - "traefik.http.services.joging-track.loadbalancer.server.port=3000"
+      - "traefik.http.routers.joging-track.rule=Host(`joging.1pc.tf`)"
+      - "traefik.http.routers.joging-track.entrypoints=websecure"
+      - "traefik.http.routers.joging-track.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.joging-track.service=joging-track"
+
+networks:
+  traefik:
+    external: true
