@@ -58,8 +58,11 @@ mengunduh berkas PNG.
 Buka tab **Setelan**, lalu tekan **Jalankan Semua Tes**. Runner menjalankan satu
 sesi rute sintetis dan melaporkan 10 pemeriksaan: konfigurasi rute, render peta,
 localStorage, protokol share, start, progress/metrik, pause/resume, warning
-geofence, finish, dan achievement. Sesi serta warning uji diisolasi dan tidak
-masuk ke riwayat pengguna.
+geofence, finish, dan achievement. Sesi simulasi yang menuntaskan seluruh
+pengujian disimpan sebagai satu run berlabel **Uji Otomatis**, sehingga progress
+dan badge achievement ikut diperbarui. Pace yang disimpan dinormalisasi menjadi
+8:00/km agar percepatan waktu simulasi tidak merusak statistik profil. Warning
+sintetis tetap diisolasi dan tidak masuk ke riwayat pengguna.
 
 Unit test dan production build dapat dijalankan dengan:
 

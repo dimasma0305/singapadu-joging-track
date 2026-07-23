@@ -92,6 +92,10 @@ import {
 } from "./lib/achievement-utils";
 import { shareRunnerProfilePng } from "./lib/runner-profile-image";
 import { resolvePrimarySessionControl } from "./lib/session-control-utils";
+import {
+  buildFunctionalTestHistoryUpdate,
+  createCompletedFunctionalTestSession,
+} from "./lib/functional-test-utils";
 
 type GeolocationPermissionState = PermissionState | "unknown" | "unsupported";
 type GpsHealthState = "unknown" | "checking" | "ready" | "permission-denied" | "timeout" | "provider-off" | "error";
@@ -1820,31 +1824,7 @@ export default function HomePage() {
 
     clearFunctionalTestTimers();
     const now = Date.now();
-    const durationSeconds = Math.max(
-      current.durationSeconds,
-      calculateActiveDurationSeconds({
-        startedAt: current.startedAt,
-        currentTimestamp: now,
-        totalPausedMilliseconds: current.totalPausedMilliseconds,
-      })
-    );
-    const averagePacePerKm =
-      current.distanceMeters > 0 && durationSeconds > 0
-        ? Number((durationSeconds / 60 / (current.distanceMeters / 1000)).toFixed(2))
-        : 0;
-    const completedSession: RunSession = {
-      ...current,
-      status: "finished",
-      endedAt: now,
-      pausedAt: null,
-      durationSeconds,
-      averagePacePerKm,
-      maxPacePerKm:
-        current.maxPacePerKm > 0
-          ? current.maxPacePerKm
-          : averagePacePerKm,
-      persisted: true,
-    };
+    const completedSession = createCompletedFunctionalTestSession(current, now);
     applySession(completedSession);
 
     const finalPosition = completedSession.samples.at(-1);
@@ -1864,15 +1844,8 @@ export default function HomePage() {
     );
 
     const simulatedAchievements = buildAchievementProgress([completedSession]);
-    const firstRunUnlocked = simulatedAchievements.some(
+    const achievementEngineWorks = simulatedAchievements.some(
       (entry) => entry.definition.id === "first-run" && entry.unlocked
-    );
-    updateFunctionalTestResult(
-      "achievement-engine",
-      firstRunUnlocked ? "passed" : "failed",
-      firstRunUnlocked
-        ? "Sesi uji membuka achievement tanpa menyimpan ke riwayat pengguna."
-        : "Achievement sesi selesai tidak terbuka."
     );
 
     if (!mapRef.current) {
@@ -1887,11 +1860,83 @@ export default function HomePage() {
     }
 
     for (const result of functionalTestResultsRef.current) {
-      if (result.status === "pending" || result.status === "running") {
+      if (
+        result.id !== "achievement-engine" &&
+        (result.status === "pending" || result.status === "running")
+      ) {
         updateFunctionalTestResult(
           result.id,
           "failed",
           "Tahap pengujian tidak selesai."
+        );
+      }
+    }
+
+    const coreTestFailed = functionalTestResultsRef.current.some(
+      (result) =>
+        result.id !== "achievement-engine" && result.status === "failed"
+    );
+    let achievementCompletionMessage =
+      "Sesi uji belum ditambahkan ke progress achievement.";
+
+    if (!achievementEngineWorks) {
+      updateFunctionalTestResult(
+        "achievement-engine",
+        "failed",
+        "Engine tidak membuka achievement dari sesi yang sudah selesai."
+      );
+    } else if (coreTestFailed) {
+      updateFunctionalTestResult(
+        "achievement-engine",
+        "skipped",
+        "Sesi tidak disimpan karena pengujian lain belum lulus."
+      );
+    } else {
+      const historyUpdate = buildFunctionalTestHistoryUpdate(
+        sessionHistory,
+        completedSession,
+        SESSION_HISTORY_LIMIT
+      );
+      const firstRunUnlocked = historyUpdate.progress.some(
+        (entry) =>
+          entry.definition.id === "first-run" && entry.unlocked
+      );
+
+      try {
+        if (!historyUpdate.sessionRecorded || !firstRunUnlocked) {
+          throw new Error(
+            "Sesi uji tidak masuk ke perhitungan achievement."
+          );
+        }
+
+        localStorage.setItem(
+          TRACK_KEY,
+          JSON.stringify(historyUpdate.nextHistory)
+        );
+        setSessionHistory(historyUpdate.nextHistory);
+
+        const newlyUnlockedTitles = historyUpdate.newlyUnlocked.map(
+          (entry) => entry.definition.title
+        );
+        achievementCompletionMessage =
+          newlyUnlockedTitles.length > 0
+            ? `Sesi uji disimpan. Achievement terbuka: ${newlyUnlockedTitles.join(", ")}.`
+            : `Sesi uji disimpan sebagai run ke-${historyUpdate.summary.completedRuns}; progress achievement bertambah.`;
+        setAchievementStatus(achievementCompletionMessage);
+        updateFunctionalTestResult(
+          "achievement-engine",
+          "passed",
+          achievementCompletionMessage
+        );
+      } catch (error) {
+        achievementCompletionMessage =
+          error instanceof Error
+            ? error.message
+            : "Progress achievement gagal disimpan.";
+        updateFunctionalTestResult(
+          "achievement-engine",
+          "failed",
+          achievementCompletionMessage
         );
       }
     }
@@ -1911,7 +1956,7 @@ export default function HomePage() {
       title: failed ? "Uji Fungsional Menemukan Masalah" : "Semua Uji Fungsional Lulus",
       message: failed
         ? "Buka Setelan untuk melihat komponen yang gagal."
-        : "Seluruh fungsi yang dapat diuji otomatis bekerja dengan benar.",
+        : achievementCompletionMessage,
       severity: failed ? "warning" : "info",
       autoHideMs: 7000,
     });
@@ -3237,6 +3282,11 @@ export default function HomePage() {
                           <div className="card-date-group">
                             <span className="card-date">{endLabel}</span>
                             {index === 0 ? <span className="latest-history-badge">Terbaru</span> : null}
+                            {entry.sessionId.startsWith("functional-test-") ? (
+                              <span className="functional-test-history-badge">
+                                Uji Otomatis
+                              </span>
+                            ) : null}
                             <span className={`session-history-status ${entry.status}`}>
                               {entry.status === "paused" ? "Dijeda" : "Selesai"}
                             </span>
@@ -3388,7 +3438,8 @@ export default function HomePage() {
                     </button>
                   )}
                   <p className="functional-test-footnote">
-                    Sesi pengujian dan warning sintetis tidak dimasukkan ke riwayat pengguna.
+                    Sesi simulasi yang lulus dihitung sebagai satu run untuk memicu progress
+                    achievement. Warning sintetis tetap tidak disimpan.
                   </p>
                 </div>
 

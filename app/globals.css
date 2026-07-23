@@ -1340,6 +1340,17 @@ main.track-shell {
   text-transform: uppercase;
 }
 
+.functional-test-history-badge {
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: rgba(56, 189, 248, 0.15);
+  color: #7dd3fc;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .session-history-status {
   border-radius: 999px;
   padding: 2px 7px;
