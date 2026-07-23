@@ -7,7 +7,9 @@ Aplikasi web untuk single-QR jogging track:
 - progress & pace
 - area warning berbasis jarak (info/warning/critical)
 - achievement lokal berdasarkan jumlah run, total jarak, dan pace
-- share achievement melalui URL ringkas tanpa backend
+- Trophy Case dan ringkasan seluruh achievement + statistik lari
+- share achievement individual maupun ringkasan melalui URL ringkas tanpa backend
+- uji fungsional otomatis dari menu Setelan
 
 ## Menjalankan
 
@@ -37,10 +39,28 @@ Buka: `http://localhost:3000/?track=main`
 
 ## Tautan achievement
 
-Achievement dibagikan melalui fragmen URL `#a=<token>`. Token memakai protokol
-biner versi 1, varint, kuantisasi jarak 10 meter/tanggal satu hari, checksum
-CRC-16, dan Base64URL tanpa padding. Fragmen tidak dikirim ke server dan dapat
-dibaca sepenuhnya di browser penerima.
+- `#a=<token>` membagikan satu achievement.
+- `#p=<token>` membagikan Trophy Case lengkap, jumlah run, total kilometer,
+  durasi, pace rata-rata, best pace, run terjauh, nama, dan tanggal.
+
+Keduanya memakai protokol biner versi 1 dengan varint, bitmask achievement,
+kuantisasi angka, checksum CRC-16, dan Base64URL tanpa padding. Fragmen tidak
+dikirim ke server dan dapat dibaca sepenuhnya di browser penerima.
+
+## Uji fungsional otomatis
+
+Buka tab **Setelan**, lalu tekan **Jalankan Semua Tes**. Runner menjalankan satu
+sesi rute sintetis dan melaporkan 10 pemeriksaan: konfigurasi rute, render peta,
+localStorage, protokol share, start, progress/metrik, pause/resume, warning
+geofence, finish, dan achievement. Sesi serta warning uji diisolasi dan tidak
+masuk ke riwayat pengguna.
+
+Unit test dan production build dapat dijalankan dengan:
+
+```bash
+npm test -- --runInBand
+npm run build
+```
 
 ## Deploy ke domain `joging.1pc.tf` (Traefik)
 

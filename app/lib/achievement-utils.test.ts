@@ -1,10 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildAchievementProgress,
+  buildAchievementCollectionShareUrl,
   buildAchievementShareUrl,
+  createAchievementCollectionSharePayload,
   createAchievementSharePayload,
+  decodeAchievementCollectionHash,
+  decodeAchievementCollectionShare,
   decodeAchievementHash,
   decodeAchievementShare,
+  encodeAchievementCollectionShare,
   encodeAchievementShare,
   normalizeRunnerName,
   summarizeAchievements,
@@ -62,6 +67,10 @@ describe("achievement progress", () => {
     expect(pace?.unlockedAt).toBe(sessions[1].endedAt);
     expect(summary.completedRuns).toBe(2);
     expect(summary.bestPaceSecondsPerKm).toBe(348);
+    expect(summary.totalDistanceMeters).toBe(6400);
+    expect(summary.totalDurationSeconds).toBe(3600);
+    expect(summary.averagePaceSecondsPerKm).toBe(563);
+    expect(summary.longestRunMeters).toBe(3200);
   });
 });
 
@@ -118,5 +127,39 @@ describe("compact achievement share protocol", () => {
     expect(() => decodeAchievementShare(`${token.slice(0, -1)}${replacement}`)).toThrow(
       "Checksum achievement tidak cocok"
     );
+  });
+
+  test("round-trips the full trophy case and aggregate run statistics", () => {
+    const progress = buildAchievementProgress(sessions);
+    const payload = createAchievementCollectionSharePayload(
+      progress,
+      summary,
+      "Made Dimas"
+    );
+    const token = encodeAchievementCollectionShare(payload);
+    const decoded = decodeAchievementCollectionShare(token);
+    const url = buildAchievementCollectionShareUrl(
+      "https://example.com/joging?track=main",
+      payload
+    );
+
+    expect(token).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(token.length).toBeLessThan(72);
+    expect(decoded.completedRuns).toBe(10);
+    expect(decoded.totalDistanceMeters).toBe(32_000);
+    expect(decoded.totalDurationSeconds).toBe(18_000);
+    expect(decoded.averagePaceSecondsPerKm).toBe(563);
+    expect(decoded.bestPaceSecondsPerKm).toBe(345);
+    expect(decoded.longestRunMeters).toBe(3200);
+    expect(decoded.achievements.map((entry) => entry.id)).toEqual([
+      "first-run",
+      "bronze-runner",
+      "silver-runner",
+      "gold-runner",
+      "distance-10k",
+      "pace-six",
+    ]);
+    expect(decodeAchievementCollectionHash(new URL(url).hash)?.runnerName).toBe("Made Dimas");
+    expect(decodeAchievementCollectionHash("#section")).toBeNull();
   });
 });

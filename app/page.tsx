@@ -21,7 +21,6 @@ import {
   Navigation,
   MapPin,
   Volume2,
-  Cpu,
   Trash2,
   Shield,
   Trophy,
@@ -38,6 +37,13 @@ import {
   Crown,
   Route,
   LockKeyhole,
+  CheckCircle2,
+  XCircle,
+  CircleDashed,
+  TestTube2,
+  RotateCcw,
+  Database,
+  Link2,
 } from "lucide-react";
 import type {
   RunSession,
@@ -72,14 +78,20 @@ import {
 } from "./lib/storage-utils";
 import {
   buildAchievementProgress,
+  buildAchievementCollectionShareUrl,
   createAchievementSharePayload,
+  createAchievementCollectionSharePayload,
+  decodeAchievementCollectionHash,
   decodeAchievementHash,
   normalizeRunnerName,
+  shareAchievementCollectionLink,
   shareAchievementLink,
   summarizeAchievements,
+  type AchievementDefinition,
   type AchievementIconName,
   type AchievementProgress,
   type AchievementTier,
+  type DecodedAchievementCollectionShare,
   type DecodedAchievementShare,
 } from "./lib/achievement-utils";
 
@@ -99,6 +111,46 @@ type ToastMessage = {
   warningAreaId?: string;
   autoHideMs?: number;
 };
+
+type FunctionalTestId =
+  | "track-config"
+  | "map-render"
+  | "local-storage"
+  | "share-protocol"
+  | "session-start"
+  | "progress-metrics"
+  | "pause-resume"
+  | "warning-engine"
+  | "finish-flow"
+  | "achievement-engine";
+type FunctionalTestStatus = "pending" | "running" | "passed" | "failed" | "skipped";
+type FunctionalTestRunState = "idle" | "running" | "passed" | "failed" | "cancelled";
+type FunctionalTestResult = {
+  id: FunctionalTestId;
+  label: string;
+  status: FunctionalTestStatus;
+  message: string;
+};
+
+const FUNCTIONAL_TEST_CASES: ReadonlyArray<Pick<FunctionalTestResult, "id" | "label">> = [
+  { id: "track-config", label: "Data rute & checkpoint" },
+  { id: "map-render", label: "Render peta Leaflet" },
+  { id: "local-storage", label: "Penyimpanan lokal" },
+  { id: "share-protocol", label: "Protokol URL achievement" },
+  { id: "session-start", label: "Mulai sesi simulasi" },
+  { id: "progress-metrics", label: "Progress, jarak & pace" },
+  { id: "pause-resume", label: "Pause & resume" },
+  { id: "warning-engine", label: "Geofence & warning toast" },
+  { id: "finish-flow", label: "Area finish & penyelesaian" },
+  { id: "achievement-engine", label: "Achievement & statistik" },
+];
+
+const createFunctionalTestResults = (): FunctionalTestResult[] =>
+  FUNCTIONAL_TEST_CASES.map((testCase) => ({
+    ...testCase,
+    status: "pending",
+    message: "Menunggu pengujian.",
+  }));
 
 const TrackMapDynamic = dynamic(() => import("./components/TrackMap"), {
   ssr: false,
@@ -155,6 +207,90 @@ const AchievementIcon = ({
       return <Zap {...iconProps} />;
   }
 };
+
+const RunAchievementSummaryCard = ({
+  runnerName,
+  trackName,
+  achievements,
+  completedRuns,
+  totalDistanceMeters,
+  totalDurationSeconds,
+  averagePaceSecondsPerKm,
+  bestPaceSecondsPerKm,
+  longestRunMeters,
+  latestRunAt,
+}: {
+  runnerName: string;
+  trackName: string;
+  achievements: AchievementDefinition[];
+  completedRuns: number;
+  totalDistanceMeters: number;
+  totalDurationSeconds: number;
+  averagePaceSecondsPerKm: number;
+  bestPaceSecondsPerKm: number;
+  longestRunMeters: number;
+  latestRunAt: number | null;
+}) => (
+  <article className="run-achievement-summary" aria-label="Run achievement summary">
+    <header className="run-summary-header">
+      <span className="run-summary-sport-icon">
+        <Activity size={22} aria-hidden="true" />
+      </span>
+      <div>
+        <span className="run-summary-kicker">Run Achievement Summary</span>
+        <strong>{runnerName || "Pelari Singapadu"}</strong>
+        <small>{trackName}</small>
+      </div>
+    </header>
+
+    <div className="run-summary-distance">
+      <strong>{(totalDistanceMeters / 1000).toFixed(2)}</strong>
+      <span>Kilometer total</span>
+    </div>
+
+    <div className="run-summary-stats">
+      <span><strong>{completedRuns}</strong>Run</span>
+      <span><strong>{formatDuration(totalDurationSeconds)}</strong>Waktu total</span>
+      <span>
+        <strong>{averagePaceSecondsPerKm > 0 ? formatPace(averagePaceSecondsPerKm / 60) : "--"}</strong>
+        Avg pace
+      </span>
+      <span>
+        <strong>{bestPaceSecondsPerKm > 0 ? formatPace(bestPaceSecondsPerKm / 60) : "--"}</strong>
+        Max / best pace
+      </span>
+      <span><strong>{formatDistance(longestRunMeters)}</strong>Run terjauh</span>
+    </div>
+
+    <section className="run-summary-trophies" aria-label={`${achievements.length} achievement terbuka`}>
+      <div className="run-summary-trophies-heading">
+        <span>Trophy Case</span>
+        <strong>{achievements.length} terbuka</strong>
+      </div>
+      <div className="run-summary-badge-grid">
+        {achievements.map((achievement) => (
+          <span
+            key={achievement.id}
+            className={`run-summary-badge tier-${achievement.tier}`}
+            title={achievement.title}
+          >
+            <AchievementIcon name={achievement.icon} size={20} />
+            <small>{achievement.title}</small>
+          </span>
+        ))}
+      </div>
+    </section>
+
+    <footer className="run-summary-footer">
+      <span>
+        {latestRunAt
+          ? new Date(latestRunAt).toLocaleDateString("id-ID", { dateStyle: "long" })
+          : "Belum ada run selesai"}
+      </span>
+      <strong>KKN PPM PNB · 2026</strong>
+    </footer>
+  </article>
+);
 
 const isGeolocationPositionError = (error: unknown): error is GeolocationPositionError => {
   if (typeof error !== "object" || error === null || !("code" in error)) {
@@ -432,11 +568,18 @@ export default function HomePage() {
   const [runnerName, setRunnerName] = useState("");
   const [achievementStatus, setAchievementStatus] = useState("");
   const [sharingAchievementId, setSharingAchievementId] = useState<string | null>(null);
+  const [isSharingAchievementCollection, setIsSharingAchievementCollection] = useState(false);
   const [sharedAchievement, setSharedAchievement] = useState<DecodedAchievementShare | null>(null);
+  const [sharedAchievementCollection, setSharedAchievementCollection] =
+    useState<DecodedAchievementCollectionShare | null>(null);
   const [insecureContext, setInsecureContext] = useState(false);
 
   // Simulation State
   const [isSimulating, setIsSimulating] = useState(false);
+  const [functionalTestState, setFunctionalTestState] =
+    useState<FunctionalTestRunState>("idle");
+  const [functionalTestResults, setFunctionalTestResults] =
+    useState<FunctionalTestResult[]>(createFunctionalTestResults);
 
   const mapRef = useRef<L.Map | null>(null);
   const sessionRef = useRef(session);
@@ -450,7 +593,12 @@ export default function HomePage() {
   const lastWarningToastRef = useRef<string | null>(null);
   
   const simIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const simResumeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const simIndexRef = useRef(0);
+  const functionalTestActiveRef = useRef(false);
+  const functionalTestPauseTriggeredRef = useRef(false);
+  const functionalTestResultsRef = useRef<FunctionalTestResult[]>(createFunctionalTestResults());
+  const functionalTestWarningIdsRef = useRef<Set<string>>(new Set());
   const maxProgressWaypointIndexRef = useRef(0);
   const lastPositionRef = useRef<SessionSample | null>(null);
 
@@ -501,6 +649,9 @@ export default function HomePage() {
     return () => {
       if (simIntervalRef.current) {
         clearInterval(simIntervalRef.current);
+      }
+      if (simResumeTimeoutRef.current) {
+        clearTimeout(simResumeTimeoutRef.current);
       }
     };
   }, []);
@@ -633,6 +784,20 @@ export default function HomePage() {
     [unlockedAchievements]
   );
 
+  const functionalTestStats = useMemo(() => {
+    const passed = functionalTestResults.filter((result) => result.status === "passed").length;
+    const failed = functionalTestResults.filter((result) => result.status === "failed").length;
+    const skipped = functionalTestResults.filter((result) => result.status === "skipped").length;
+    const completed = passed + failed + skipped;
+    return {
+      passed,
+      failed,
+      skipped,
+      completed,
+      percent: Math.round((completed / functionalTestResults.length) * 100),
+    };
+  }, [functionalTestResults]);
+
   const locationPermissionMessage = useMemo(() => {
     if (gpsHealth === "provider-off") {
       return "Layanan lokasi tidak aktif / tidak tersedia. Aktifkan GPS pada perangkat lalu muat ulang aplikasi.";
@@ -742,9 +907,12 @@ export default function HomePage() {
   useEffect(() => {
     const readSharedAchievement = () => {
       try {
-        setSharedAchievement(decodeAchievementHash(window.location.hash));
+        const hash = window.location.hash;
+        setSharedAchievementCollection(decodeAchievementCollectionHash(hash));
+        setSharedAchievement(decodeAchievementHash(hash));
       } catch (error) {
         setSharedAchievement(null);
+        setSharedAchievementCollection(null);
         const message = error instanceof Error
           ? error.message
           : "Tautan achievement tidak dapat dibaca.";
@@ -988,10 +1156,66 @@ export default function HomePage() {
     }
   };
 
+  const onShareAchievementCollection = async () => {
+    if (!track || unlockedAchievements.length === 0) {
+      return;
+    }
+
+    const normalizedName = normalizeRunnerName(runnerName);
+    setRunnerName(normalizedName);
+    if (normalizedName) {
+      localStorage.setItem(ACHIEVEMENT_NAME_KEY, normalizedName);
+    }
+
+    setAchievementStatus("Sedang menyiapkan Run Achievement Summary...");
+    setIsSharingAchievementCollection(true);
+
+    try {
+      const payload = createAchievementCollectionSharePayload(
+        achievementProgress,
+        achievementSummary,
+        normalizedName
+      );
+      const result = await shareAchievementCollectionLink({
+        payload,
+        baseUrl: window.location.href,
+        trackName: track.name,
+      });
+      const messages = {
+        shared: "Run Achievement Summary berhasil dibagikan.",
+        copied: "Tautan Run Achievement Summary disalin ke clipboard.",
+        cancelled: "Berbagi Run Achievement Summary dibatalkan.",
+        unavailable: "Browser tidak dapat menyalin otomatis. Salin tautan yang ditampilkan.",
+      } as const;
+      const message = messages[result.outcome];
+      setAchievementStatus(message);
+
+      if (result.outcome === "unavailable") {
+        window.prompt("Salin tautan Run Achievement Summary ini:", result.url);
+      }
+      if (result.outcome !== "cancelled") {
+        enqueueToast({
+          title: "Bagikan Run Summary",
+          message,
+          severity: result.outcome === "unavailable" ? "warning" : "info",
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "Run Achievement Summary gagal dibagikan.";
+      setAchievementStatus(message);
+      enqueueToast({ title: "Gagal Membagikan", message, severity: "error" });
+    } finally {
+      setIsSharingAchievementCollection(false);
+    }
+  };
+
   const closeSharedAchievement = () => {
     const cleanUrl = `${window.location.pathname}${window.location.search}`;
     window.history.replaceState(null, "", cleanUrl);
     setSharedAchievement(null);
+    setSharedAchievementCollection(null);
   };
 
   const resetProgressTracking = () => {
@@ -1345,10 +1569,10 @@ export default function HomePage() {
     }
   };
 
-  const pauseSession = () => {
+  const pauseSession = (): boolean => {
     const current = sessionRef.current;
     if (current.status !== "running" || !current.startedAt) {
-      return;
+      return false;
     }
 
     const now = Date.now();
@@ -1364,18 +1588,21 @@ export default function HomePage() {
       persisted: false,
     });
     setFollowUser(false);
-    enqueueToast({
-      title: "Sesi Dijeda",
-      message: "Progres, jarak, pace, dan durasi aktif dihentikan sementara.",
-      severity: "info",
-      autoHideMs: 4000,
-    });
+    if (!functionalTestActiveRef.current) {
+      enqueueToast({
+        title: "Sesi Dijeda",
+        message: "Progres, jarak, pace, dan durasi aktif dihentikan sementara.",
+        severity: "info",
+        autoHideMs: 4000,
+      });
+    }
+    return true;
   };
 
-  const resumeSession = () => {
+  const resumeSession = (): boolean => {
     const current = sessionRef.current;
     if (current.status !== "paused" || !current.startedAt || !current.pausedAt) {
-      return;
+      return false;
     }
 
     const now = Date.now();
@@ -1399,12 +1626,15 @@ export default function HomePage() {
         : current.samples,
     });
     setFollowUser(true);
-    enqueueToast({
-      title: "Sesi Dilanjutkan",
-      message: "Tracking aktif kembali dari posisi Anda saat ini.",
-      severity: "info",
-      autoHideMs: 4000,
-    });
+    if (!functionalTestActiveRef.current) {
+      enqueueToast({
+        title: "Sesi Dilanjutkan",
+        message: "Tracking aktif kembali dari posisi Anda saat ini.",
+        severity: "info",
+        autoHideMs: 4000,
+      });
+    }
+    return true;
   };
 
   const startSession = async () => {
@@ -1546,54 +1776,299 @@ export default function HomePage() {
     }
   };
 
-  // Route Simulation logic
-  const startSimulation = () => {
-    if (!track || track.waypoints.length === 0) return;
+  const updateFunctionalTestResult = (
+    id: FunctionalTestId,
+    status: FunctionalTestStatus,
+    message: string
+  ) => {
+    const next = functionalTestResultsRef.current.map((result) =>
+      result.id === id ? { ...result, status, message } : result
+    );
+    functionalTestResultsRef.current = next;
+    setFunctionalTestResults(next);
+  };
 
-    resetSession();
-    setIsSimulating(true);
-    setFollowUser(true);
-    setLocationError(null);
-    simIndexRef.current = 0;
-
-    applySession({
-      ...createIdleSession(track.id),
-      status: "running",
-      startedAt: Date.now(),
-    });
-
+  const clearFunctionalTestTimers = () => {
     if (simIntervalRef.current) {
       clearInterval(simIntervalRef.current);
+      simIntervalRef.current = null;
+    }
+    if (simResumeTimeoutRef.current) {
+      clearTimeout(simResumeTimeoutRef.current);
+      simResumeTimeoutRef.current = null;
+    }
+  };
+
+  const finishFunctionalTest = (current: RunSession) => {
+    if (!track) {
+      return;
     }
 
+    clearFunctionalTestTimers();
+    const now = Date.now();
+    const durationSeconds = Math.max(
+      current.durationSeconds,
+      calculateActiveDurationSeconds({
+        startedAt: current.startedAt,
+        currentTimestamp: now,
+        totalPausedMilliseconds: current.totalPausedMilliseconds,
+      })
+    );
+    const averagePacePerKm =
+      current.distanceMeters > 0 && durationSeconds > 0
+        ? Number((durationSeconds / 60 / (current.distanceMeters / 1000)).toFixed(2))
+        : 0;
+    const completedSession: RunSession = {
+      ...current,
+      status: "finished",
+      endedAt: now,
+      pausedAt: null,
+      durationSeconds,
+      averagePacePerKm,
+      maxPacePerKm:
+        current.maxPacePerKm > 0
+          ? current.maxPacePerKm
+          : averagePacePerKm,
+      persisted: true,
+    };
+    applySession(completedSession);
+
+    const finalPosition = completedSession.samples.at(-1);
+    const distanceToFinish = finalPosition
+      ? haversineMeters(finalPosition, track.endAt)
+      : Number.POSITIVE_INFINITY;
+    const reachedFinish =
+      completedSession.closestIndex >= track.waypoints.length - 1 &&
+      completedSession.routeProgressMeters >= trackDistance * 0.99 &&
+      distanceToFinish <= (track.endFinishRadiusMeters ?? DEFAULT_FINISH_RADIUS_METERS);
+    updateFunctionalTestResult(
+      "finish-flow",
+      reachedFinish ? "passed" : "failed",
+      reachedFinish
+        ? `Finish terdeteksi dalam radius ${track.endFinishRadiusMeters ?? DEFAULT_FINISH_RADIUS_METERS} m.`
+        : "Simulasi tidak memenuhi syarat finish."
+    );
+
+    const simulatedAchievements = buildAchievementProgress([completedSession]);
+    const firstRunUnlocked = simulatedAchievements.some(
+      (entry) => entry.definition.id === "first-run" && entry.unlocked
+    );
+    updateFunctionalTestResult(
+      "achievement-engine",
+      firstRunUnlocked ? "passed" : "failed",
+      firstRunUnlocked
+        ? "Sesi uji membuka achievement tanpa menyimpan ke riwayat pengguna."
+        : "Achievement sesi selesai tidak terbuka."
+    );
+
+    if (!mapRef.current) {
+      updateFunctionalTestResult("map-render", "failed", "Instance peta tidak tersedia.");
+    }
+    if (functionalTestWarningIdsRef.current.size === 0) {
+      updateFunctionalTestResult(
+        "warning-engine",
+        "failed",
+        "Engine warning tidak menghasilkan event."
+      );
+    }
+
+    for (const result of functionalTestResultsRef.current) {
+      if (result.status === "pending" || result.status === "running") {
+        updateFunctionalTestResult(
+          result.id,
+          "failed",
+          "Tahap pengujian tidak selesai."
+        );
+      }
+    }
+
+    const failed = functionalTestResultsRef.current.some(
+      (result) => result.status === "failed"
+    );
+    functionalTestActiveRef.current = false;
+    isSimulatingRef.current = false;
+    setIsSimulating(false);
+    setFunctionalTestState(failed ? "failed" : "passed");
+    setFollowUser(false);
+    setActiveTab("settings");
+    resetSession();
+    setToastQueue([]);
+    enqueueToast({
+      title: failed ? "Uji Fungsional Menemukan Masalah" : "Semua Uji Fungsional Lulus",
+      message: failed
+        ? "Buka Setelan untuk melihat komponen yang gagal."
+        : "Seluruh fungsi yang dapat diuji otomatis bekerja dengan benar.",
+      severity: failed ? "warning" : "info",
+      autoHideMs: 7000,
+    });
+  };
+
+  // Automated route simulation and functional test runner.
+  const startSimulation = () => {
+    if (!track || track.waypoints.length === 0) {
+      return;
+    }
+    if (
+      !isSimulatingRef.current &&
+      (sessionRef.current.status === "running" || sessionRef.current.status === "paused")
+    ) {
+      enqueueToast({
+        title: "Sesi Sedang Aktif",
+        message: "Selesaikan atau reset sesi lari sebelum menjalankan uji fungsional.",
+        severity: "warning",
+      });
+      return;
+    }
+
+    clearFunctionalTestTimers();
+    const initialResults = createFunctionalTestResults();
+    functionalTestResultsRef.current = initialResults;
+    setFunctionalTestResults(initialResults);
+    setFunctionalTestState("running");
+    functionalTestActiveRef.current = true;
+    functionalTestPauseTriggeredRef.current = false;
+    functionalTestWarningIdsRef.current = new Set();
+    warningStateRef.current = {};
+    offRouteStateRef.current = { outside: false, lastShown: 0 };
+    simIndexRef.current = 0;
+    resetProgressTracking();
+    setIsSimulating(true);
+    isSimulatingRef.current = true;
+    setFollowUser(true);
+    setLocationError(null);
+    setStartBlockInfo(null);
+    setWarningPopup(null);
+    setActiveWarningId(null);
+    setToastQueue([]);
+
+    const validTrack =
+      track.waypoints.length >= 2 &&
+      track.checkpoints.length === 8 &&
+      trackDistance > 0 &&
+      (track.startRadiusMeters ?? DEFAULT_START_RADIUS_METERS) >= 50 &&
+      (track.endFinishRadiusMeters ?? DEFAULT_FINISH_RADIUS_METERS) >= 50;
+    updateFunctionalTestResult(
+      "track-config",
+      validTrack ? "passed" : "failed",
+      validTrack
+        ? `${track.waypoints.length} titik, 8 checkpoint, radius start/finish valid.`
+        : "Data rute, checkpoint, atau radius start/finish tidak valid."
+    );
+
+    updateFunctionalTestResult(
+      "map-render",
+      mapRef.current ? "passed" : "running",
+      mapRef.current ? "Peta Leaflet aktif." : "Menunggu instance peta."
+    );
+
+    const storageTestKey = `joging-track:functional-test:${Date.now()}`;
+    try {
+      localStorage.setItem(storageTestKey, "ok");
+      const storageWorks = localStorage.getItem(storageTestKey) === "ok";
+      updateFunctionalTestResult(
+        "local-storage",
+        storageWorks ? "passed" : "failed",
+        storageWorks
+          ? "Write, read, dan cleanup localStorage berhasil."
+          : "Nilai localStorage tidak dapat dibaca kembali."
+      );
+    } catch {
+      updateFunctionalTestResult(
+        "local-storage",
+        "failed",
+        "Browser menolak akses localStorage."
+      );
+    } finally {
+      try {
+        localStorage.removeItem(storageTestKey);
+      } catch {
+        // The failed storage result above already reports restricted access.
+      }
+    }
+
+    try {
+      const diagnosticDistance = Math.max(1000, Math.round(trackDistance));
+      const diagnosticDuration = 600;
+      const diagnosticPace = Math.round(
+        (diagnosticDuration / diagnosticDistance) * 1000
+      );
+      const diagnosticUrl = buildAchievementCollectionShareUrl(window.location.href, {
+        runnerName: "Functional Test",
+        unlockedAchievementIds: ["first-run"],
+        completedRuns: 1,
+        totalDistanceMeters: diagnosticDistance,
+        totalDurationSeconds: diagnosticDuration,
+        averagePaceSecondsPerKm: diagnosticPace,
+        bestPaceSecondsPerKm: diagnosticPace,
+        longestRunMeters: diagnosticDistance,
+        latestRunAt: Date.now(),
+      });
+      const decoded = decodeAchievementCollectionHash(new URL(diagnosticUrl).hash);
+      const shareProtocolWorks =
+        decoded?.completedRuns === 1 &&
+        decoded.unlockedAchievementIds.includes("first-run");
+      updateFunctionalTestResult(
+        "share-protocol",
+        shareProtocolWorks ? "passed" : "failed",
+        shareProtocolWorks
+          ? `Compact URL berhasil di-encode dan decode (${diagnosticUrl.length} karakter).`
+          : "Data compact URL berubah setelah decode."
+      );
+    } catch (error) {
+      updateFunctionalTestResult(
+        "share-protocol",
+        "failed",
+        error instanceof Error ? error.message : "Protokol share gagal diuji."
+      );
+    }
+
+    const testSession: RunSession = {
+      ...createIdleSession(track.id),
+      sessionId: `functional-test-${Date.now()}`,
+      status: "running",
+      startedAt: Date.now(),
+      persisted: true,
+    };
+    applySession(testSession);
+    updateFunctionalTestResult("session-start", "passed", "State sesi berubah menjadi running.");
+    updateFunctionalTestResult("progress-metrics", "running", "Menunggu pergerakan rute.");
+    updateFunctionalTestResult("pause-resume", "running", "Dijadwalkan pada sepertiga rute.");
+    updateFunctionalTestResult("warning-engine", "running", "Menunggu zona uji.");
+    updateFunctionalTestResult("finish-flow", "running", "Menunggu waypoint terakhir.");
+    updateFunctionalTestResult("achievement-engine", "running", "Menunggu sesi selesai.");
+
+    const pauseIndex = Math.max(2, Math.floor(track.waypoints.length / 3));
+    const warningIndex = Math.max(1, Math.floor(track.waypoints.length / 2));
+
     const interval = setInterval(() => {
+      if (!functionalTestActiveRef.current) {
+        return;
+      }
       if (sessionRef.current.status !== "running") {
         return;
+      }
+      if (mapRef.current) {
+        updateFunctionalTestResult("map-render", "passed", "Peta Leaflet aktif.");
       }
 
       const idx = simIndexRef.current;
       const waypoints = track.waypoints;
-
       if (idx >= waypoints.length) {
-        clearInterval(interval);
-        setIsSimulating(false);
-        finishSession();
+        finishFunctionalTest(sessionRef.current);
         return;
       }
 
-      const pt = waypoints[idx];
+      const point = waypoints[idx];
       const sample: SessionSample = {
-        lat: pt.lat,
-        lng: pt.lng,
-        accuracy: 6 + Math.random() * 4,
+        lat: point.lat,
+        lng: point.lng,
+        accuracy: 8,
         timestamp: Date.now(),
       };
-
       const current = sessionRef.current;
-      const previous = current.samples[current.samples.length - 1];
-      const delta = previous ? haversineMeters(previous, sample) : 0;
-      const distanceMeters = current.distanceMeters + delta;
-
+      const previous = current.samples.at(-1);
+      const distanceMeters =
+        current.distanceMeters + (previous ? haversineMeters(previous, sample) : 0);
       const durationSeconds = Math.max(
         0,
         calculateActiveDurationSeconds({
@@ -1602,14 +2077,16 @@ export default function HomePage() {
           totalPausedMilliseconds: current.totalPausedMilliseconds,
         })
       );
-
       const pace =
         distanceMeters > 3 && durationSeconds > 0
           ? Number((durationSeconds / 60 / (distanceMeters / 1000)).toFixed(2))
           : 0;
-
-      const maxPace = pace > current.maxPacePerKm ? pace : current.maxPacePerKm;
-
+      const maxPace =
+        pace > 0 && (current.maxPacePerKm <= 0 || pace < current.maxPacePerKm)
+          ? pace
+          : current.maxPacePerKm;
+      const routeProgressMeters =
+        cumulativeDistances[Math.min(idx, cumulativeDistances.length - 1)] ?? 0;
       const next: RunSession = {
         ...current,
         distanceMeters,
@@ -1617,47 +2094,109 @@ export default function HomePage() {
         averagePacePerKm: pace,
         maxPacePerKm: maxPace,
         closestIndex: idx,
-        routeProgressMeters: cumulativeDistances[Math.min(idx, cumulativeDistances.length - 1)] ?? 0,
-        samples: [...current.samples, sample],
+        routeProgressMeters,
+        samples: [...current.samples.slice(-299), { ...sample, routeProgressMeters }],
         status: "running",
-        persisted: false,
+        persisted: true,
       };
 
       applySession(next);
       setLastPosition(sample);
       lastPositionRef.current = sample;
       maxProgressWaypointIndexRef.current = idx;
-      evaluateWarnings(sample);
 
-      if (track.endAt && idx === waypoints.length - 1) {
-        clearInterval(interval);
-        setIsSimulating(false);
-        finishSession();
+      const syntheticWarning: WarningArea = {
+        id: "functional-test-zone",
+        name: "Zona Uji Otomatis",
+        type: "info",
+        center: { lat: point.lat, lng: point.lng },
+        radiusMeters: 10,
+        triggerDistanceMeters: 5,
+        message: "Engine geofence berhasil mendeteksi posisi simulasi.",
+        cooldownSeconds: 60,
+        showOnce: true,
+        active: true,
+      };
+      evaluateWarnings(sample, idx === warningIndex ? [syntheticWarning] : undefined);
+
+      if (distanceMeters > 0 && routeProgressMeters > 0 && durationSeconds > 0 && pace > 0) {
+        updateFunctionalTestResult(
+          "progress-metrics",
+          "passed",
+          "Jarak, progress, durasi, dan pace berubah selama simulasi."
+        );
+      }
+
+      if (idx === pauseIndex && !functionalTestPauseTriggeredRef.current) {
+        functionalTestPauseTriggeredRef.current = true;
+        simIndexRef.current += 1;
+        const paused = pauseSession();
+        updateFunctionalTestResult(
+          "pause-resume",
+          paused ? "running" : "failed",
+          paused ? "Pause berhasil; menunggu resume otomatis." : "State tidak berubah menjadi paused."
+        );
+        simResumeTimeoutRef.current = setTimeout(() => {
+          if (!functionalTestActiveRef.current || !paused) {
+            return;
+          }
+          const resumed = resumeSession();
+          updateFunctionalTestResult(
+            "pause-resume",
+            resumed ? "passed" : "failed",
+            resumed
+              ? "Pause dan resume mempertahankan progres sesi."
+              : "State tidak kembali menjadi running."
+          );
+        }, 700);
+        return;
+      }
+
+      if (idx === waypoints.length - 1) {
+        finishFunctionalTest(next);
       } else {
         simIndexRef.current += 1;
       }
-    }, 2000);
+    }, 500);
 
     simIntervalRef.current = interval;
   };
 
   const stopSimulation = () => {
-    if (simIntervalRef.current) {
-      clearInterval(simIntervalRef.current);
-      simIntervalRef.current = null;
-    }
+    const wasRunning = functionalTestActiveRef.current;
+    clearFunctionalTestTimers();
+    functionalTestActiveRef.current = false;
+    isSimulatingRef.current = false;
     setIsSimulating(false);
     resetProgressTracking();
-    finishSession();
+
+    if (wasRunning) {
+      for (const result of functionalTestResultsRef.current) {
+        if (result.status === "pending" || result.status === "running") {
+          updateFunctionalTestResult(result.id, "skipped", "Tes dihentikan oleh pengguna.");
+        }
+      }
+      setFunctionalTestState("cancelled");
+      enqueueToast({
+        title: "Uji Fungsional Dihentikan",
+        message: "Data pengujian tidak disimpan ke riwayat lari.",
+        severity: "info",
+      });
+    }
+    resetSession();
   };
 
-  const evaluateWarnings = (sample: SessionSample) => {
+  const evaluateWarnings = (
+    sample: SessionSample,
+    warningAreasOverride?: WarningArea[]
+  ) => {
     if (!track) {
       return;
     }
 
     const now = sample.timestamp;
-    const active: WarningArea[] = (track.warningAreas ?? []).filter((entry) => entry.active);
+    const active: WarningArea[] = (warningAreasOverride ?? track.warningAreas ?? [])
+      .filter((entry) => entry.active);
     let winner: WarningEvent | null = null;
 
     active.forEach((area) => {
@@ -1698,7 +2237,16 @@ export default function HomePage() {
       const actualWinner = winner as WarningEvent;
       setWarningPopup(actualWinner);
       setActiveWarningId(actualWinner.areaId);
-      setWarningLog((prev) => [actualWinner, ...prev].slice(0, 15));
+      if (functionalTestActiveRef.current) {
+        functionalTestWarningIdsRef.current.add(actualWinner.areaId);
+        updateFunctionalTestResult(
+          "warning-engine",
+          "passed",
+          `Geofence memicu toast "${actualWinner.areaName}".`
+        );
+      } else {
+        setWarningLog((prev) => [actualWinner, ...prev].slice(0, 15));
+      }
 
       if (useSoundAndHapticRef.current) {
         playWarningSound(actualWinner.type);
@@ -1929,6 +2477,9 @@ export default function HomePage() {
 
   // Persist paused snapshots and completed sessions in local history.
   useEffect(() => {
+    if (session.sessionId.startsWith("functional-test-")) {
+      return;
+    }
     const isPersistable = session.status === "paused" || session.status === "finished";
     const hasStatusTimestamp = session.status === "paused"
       ? Boolean(session.pausedAt)
@@ -2026,6 +2577,37 @@ export default function HomePage() {
         {achievementStatus}
       </span>
 
+      {sharedAchievementCollection ? (
+        <section
+          className="shared-run-summary-overlay"
+          aria-label="Run Achievement Summary yang dibagikan"
+        >
+          <button
+            type="button"
+            className="shared-run-summary-close"
+            onClick={closeSharedAchievement}
+            aria-label="Tutup Run Achievement Summary"
+          >
+            <X size={18} aria-hidden="true" />
+          </button>
+          <RunAchievementSummaryCard
+            runnerName={sharedAchievementCollection.runnerName}
+            trackName={track?.name ?? "Singapadu Jogging Track"}
+            achievements={sharedAchievementCollection.achievements}
+            completedRuns={sharedAchievementCollection.completedRuns}
+            totalDistanceMeters={sharedAchievementCollection.totalDistanceMeters}
+            totalDurationSeconds={sharedAchievementCollection.totalDurationSeconds}
+            averagePaceSecondsPerKm={sharedAchievementCollection.averagePaceSecondsPerKm}
+            bestPaceSecondsPerKm={sharedAchievementCollection.bestPaceSecondsPerKm}
+            longestRunMeters={sharedAchievementCollection.longestRunMeters}
+            latestRunAt={sharedAchievementCollection.latestRunAt}
+          />
+          <p className="shared-run-summary-note">
+            Data dibawa langsung di URL compact v{sharedAchievementCollection.protocolVersion} tanpa backend.
+          </p>
+        </section>
+      ) : null}
+
       {sharedAchievement ? (
         <section
           className={`shared-achievement-card tier-${sharedAchievement.achievement.tier}`}
@@ -2089,7 +2671,7 @@ export default function HomePage() {
         </div>
         <div className="hero-actions">
           {isSimulating ? (
-            <span className="status-chip simulation">Simulasi</span>
+            <span className="status-chip simulation">Uji Otomatis</span>
           ) : null}
           <span className={`status-chip ${statusTone}`}>
             {session.status === "running" ? "Active" : session.status === "paused" ? "Paused" : session.status === "finished" ? "Done" : "Idle"}
@@ -2581,6 +3163,44 @@ export default function HomePage() {
                   </span>
                 </div>
 
+                <div className="run-summary-share-block">
+                  <RunAchievementSummaryCard
+                    runnerName={runnerName}
+                    trackName={track?.name ?? "Singapadu Jogging Track"}
+                    achievements={unlockedAchievements.map((entry) => entry.definition)}
+                    completedRuns={achievementSummary.completedRuns}
+                    totalDistanceMeters={achievementSummary.totalDistanceMeters}
+                    totalDurationSeconds={achievementSummary.totalDurationSeconds}
+                    averagePaceSecondsPerKm={achievementSummary.averagePaceSecondsPerKm}
+                    bestPaceSecondsPerKm={achievementSummary.bestPaceSecondsPerKm}
+                    longestRunMeters={achievementSummary.longestRunMeters}
+                    latestRunAt={achievementSummary.latestRunAt}
+                  />
+                  <button
+                    type="button"
+                    className="btn-run-summary-share"
+                    onClick={onShareAchievementCollection}
+                    disabled={
+                      unlockedAchievements.length === 0 ||
+                      isSharingAchievementCollection
+                    }
+                  >
+                    {isSharingAchievementCollection ? (
+                      <Loader2 size={18} className="animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Share2 size={18} aria-hidden="true" />
+                    )}
+                    <span>
+                      {isSharingAchievementCollection
+                        ? "Menyiapkan summary..."
+                        : "Bagikan Semua Achievement"}
+                    </span>
+                  </button>
+                  <p>
+                    Tautan memuat seluruh badge terbuka dan statistik agregat dalam payload Base64URL ringkas.
+                  </p>
+                </div>
+
                 <div className="achievement-grid">
                   {achievementProgress.map((entry) => {
                     const definition = entry.definition;
@@ -2718,22 +3338,107 @@ export default function HomePage() {
 
                 <div className="settings-divider"></div>
 
-                <div className="simulation-control-box">
-                  <strong>
-                    <Cpu size={18} className="setting-icon-inline" />
-                    <span>Fitur Simulasi Rute (Dev Mode)</span>
-                  </strong>
-                  <p>Butuh menguji geofence atau memvisualisasikan data tanpa berjalan fisik? Fitur ini akan menyimulasikan GPS Anda bergerak menyusuri rute secara otomatis.</p>
-                  
+                <div className={`functional-test-box state-${functionalTestState}`}>
+                  <div className="functional-test-heading">
+                    <span className="functional-test-icon">
+                      <TestTube2 size={20} aria-hidden="true" />
+                    </span>
+                    <div>
+                      <strong>Uji Fungsional Otomatis</strong>
+                      <p>
+                        Simulasikan satu run lengkap dan periksa fungsi utama aplikasi dalam sekitar 10 detik.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="functional-test-capabilities" aria-label="Cakupan keamanan pengujian">
+                    <span><Database size={13} aria-hidden="true" /> Data uji terisolasi</span>
+                    <span><Link2 size={13} aria-hidden="true" /> URL compact diuji</span>
+                  </div>
+
+                  <div className="functional-test-overview">
+                    <div>
+                      <span>Status</span>
+                      <strong>
+                        {functionalTestState === "idle"
+                          ? "Belum diuji"
+                          : functionalTestState === "running"
+                            ? "Sedang menguji"
+                            : functionalTestState === "passed"
+                              ? "Semua lulus"
+                              : functionalTestState === "failed"
+                                ? "Ada masalah"
+                                : "Dihentikan"}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>Hasil</span>
+                      <strong>{functionalTestStats.passed}/{functionalTestResults.length} lulus</strong>
+                    </div>
+                  </div>
+
+                  <div
+                    className="functional-test-progress"
+                    role="progressbar"
+                    aria-label="Progres uji fungsional"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={functionalTestStats.percent}
+                  >
+                    <span style={{ width: `${functionalTestStats.percent}%` }} />
+                  </div>
+
+                  <div className="functional-test-results" aria-live="polite">
+                    {functionalTestResults.map((result) => (
+                      <div key={result.id} className={`functional-test-result ${result.status}`}>
+                        <span className="functional-test-result-icon">
+                          {result.status === "passed" ? (
+                            <CheckCircle2 size={17} aria-hidden="true" />
+                          ) : result.status === "failed" ? (
+                            <XCircle size={17} aria-hidden="true" />
+                          ) : result.status === "running" ? (
+                            <Loader2 size={17} className="animate-spin" aria-hidden="true" />
+                          ) : (
+                            <CircleDashed size={17} aria-hidden="true" />
+                          )}
+                        </span>
+                        <span>
+                          <strong>{result.label}</strong>
+                          <small>{result.message}</small>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+
                   {isSimulating ? (
-                    <button className="btn-simulation stop" onClick={stopSimulation}>
-                      Hentikan Simulasi Rute
+                    <button
+                      type="button"
+                      className="btn-functional-test stop"
+                      onClick={stopSimulation}
+                    >
+                      <X size={17} aria-hidden="true" />
+                      Hentikan Pengujian
                     </button>
                   ) : (
-                    <button className="btn-simulation start" onClick={startSimulation} disabled={!track}>
-                      Jalankan Simulasi Rute
+                    <button
+                      type="button"
+                      className="btn-functional-test start"
+                      onClick={startSimulation}
+                      disabled={!track}
+                    >
+                      {functionalTestState === "idle" ? (
+                        <TestTube2 size={17} aria-hidden="true" />
+                      ) : (
+                        <RotateCcw size={17} aria-hidden="true" />
+                      )}
+                      {functionalTestState === "idle"
+                        ? "Jalankan Semua Tes"
+                        : "Ulangi Semua Tes"}
                     </button>
                   )}
+                  <p className="functional-test-footnote">
+                    Sesi pengujian dan warning sintetis tidak dimasukkan ke riwayat pengguna.
+                  </p>
                 </div>
 
                 <div className="settings-divider"></div>

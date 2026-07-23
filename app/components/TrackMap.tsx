@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
-import { Circle, MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from "react-leaflet";
+import { Circle, MapContainer, Marker, Polyline, Popup, TileLayer, Tooltip, useMap } from "react-leaflet";
 import L from "leaflet";
 import type { SessionSample, Track, WarningArea } from "../lib/types";
 import { createGoogleStreetViewUrl, haversineMeters } from "../lib/track-utils";
@@ -284,9 +284,21 @@ export default function TrackMap({
               weight: 2,
               opacity: 0.85,
               dashArray: "8, 8",
-              className: showFinishArea ? "finish-area-circle" : "start-area-circle",
+              className: `area-effect-circle ${showFinishArea ? "finish-area-circle" : "start-area-circle"}`,
             }}
-          />
+          >
+            <Tooltip
+              permanent
+              direction="bottom"
+              offset={[0, 18]}
+              opacity={1}
+              className={`area-effect-label ${showFinishArea ? "finish" : "start"}`}
+            >
+              {showFinishArea
+                ? `Area Finish · ${Math.round(finishRadiusMeters)} m`
+                : `Area Start · ${Math.round(startRadiusMeters)} m`}
+            </Tooltip>
+          </Circle>
           <Marker
             position={[track.startAt.lat, track.startAt.lng]}
             icon={
@@ -310,9 +322,19 @@ export default function TrackMap({
               weight: 2,
               opacity: 0.85,
               dashArray: "8, 8",
-              className: "start-area-circle",
+              className: "area-effect-circle start-area-circle",
             }}
-          />
+          >
+            <Tooltip
+              permanent
+              direction="bottom"
+              offset={[0, 18]}
+              opacity={1}
+              className="area-effect-label start"
+            >
+              Area Start · {Math.round(startRadiusMeters)} m
+            </Tooltip>
+          </Circle>
           <Marker
             position={[track.startAt.lat, track.startAt.lng]}
             icon={createBadgeIcon("START", "#10b981", false)}
@@ -328,9 +350,19 @@ export default function TrackMap({
               weight: 2,
               opacity: 0.85,
               dashArray: "8, 8",
-              className: "finish-area-circle",
+              className: "area-effect-circle finish-area-circle",
             }}
-          />
+          >
+            <Tooltip
+              permanent
+              direction="bottom"
+              offset={[0, 18]}
+              opacity={1}
+              className="area-effect-label finish"
+            >
+              Area Finish · {Math.round(finishRadiusMeters)} m
+            </Tooltip>
+          </Circle>
           <Marker
             position={[track.endAt.lat, track.endAt.lng]}
             icon={createBadgeIcon("FINISH", "#ef4444", showFinishArea)}

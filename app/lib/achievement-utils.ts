@@ -1,5 +1,5 @@
 import type { RunSession } from "./types";
-import { formatDistance, formatPace } from "./track-utils";
+import { formatDistance, formatDuration, formatPace } from "./track-utils";
 
 export type AchievementId =
   | "first-run"
@@ -30,7 +30,10 @@ export type AchievementDefinition = {
 export type AchievementSummary = {
   completedRuns: number;
   totalDistanceMeters: number;
+  totalDurationSeconds: number;
+  averagePaceSecondsPerKm: number;
   bestPaceSecondsPerKm: number;
+  longestRunMeters: number;
   latestRunAt: number | null;
 };
 
@@ -65,8 +68,27 @@ export type AchievementShareResult = {
   url: string;
 };
 
+export type AchievementCollectionSharePayload = {
+  runnerName: string;
+  unlockedAchievementIds: AchievementId[];
+  completedRuns: number;
+  totalDistanceMeters: number;
+  totalDurationSeconds: number;
+  averagePaceSecondsPerKm: number;
+  bestPaceSecondsPerKm: number;
+  longestRunMeters: number;
+  latestRunAt: number;
+};
+
+export type DecodedAchievementCollectionShare = AchievementCollectionSharePayload & {
+  achievements: AchievementDefinition[];
+  protocolVersion: number;
+};
+
 const SHARE_PROTOCOL_VERSION = 1;
 const SHARE_HASH_PREFIX = "#a=";
+const COLLECTION_SHARE_PROTOCOL_VERSION = 1;
+const COLLECTION_SHARE_HASH_PREFIX = "#p=";
 const DAY_MILLISECONDS = 86_400_000;
 const PROTOCOL_EPOCH_DAY = Math.floor(Date.UTC(2020, 0, 1) / DAY_MILLISECONDS);
 const MAX_RUNS = 100_000;
@@ -75,6 +97,7 @@ const MAX_PACE_SECONDS = 7_200;
 const MAX_NAME_BYTES = 160;
 const MAX_TOKEN_LENGTH = 320;
 const MAX_ACHIEVEMENT_DAY_OFFSET = 16_383;
+const MAX_DURATION_DECASECONDS = 100_000_000;
 
 // The array order is part of compact share protocol v1. Append new definitions;
 // never reorder existing entries without introducing a new protocol version.
@@ -171,12 +194,21 @@ export const normalizeRunnerName = (value: string): string =>
 export const summarizeAchievements = (sessions: RunSession[]): AchievementSummary => {
   const completed = getCompletedSessions(sessions);
   let totalDistanceMeters = 0;
+  let totalDurationSeconds = 0;
   let bestPaceSecondsPerKm = 0;
+  let longestRunMeters = 0;
 
   for (const session of completed) {
-    totalDistanceMeters += Math.max(0, session.distanceMeters);
-    if (session.averagePacePerKm > 0 && Number.isFinite(session.averagePacePerKm)) {
-      const paceSeconds = Math.round(session.averagePacePerKm * 60);
+    const sessionDistance = Math.max(0, session.distanceMeters);
+    const sessionDuration = Math.max(0, session.durationSeconds);
+    totalDistanceMeters += sessionDistance;
+    totalDurationSeconds += sessionDuration;
+    longestRunMeters = Math.max(longestRunMeters, sessionDistance);
+
+    const validPaces = [session.averagePacePerKm, session.maxPacePerKm]
+      .filter((pace) => pace > 0 && Number.isFinite(pace));
+    if (validPaces.length > 0) {
+      const paceSeconds = Math.round(Math.min(...validPaces) * 60);
       if (bestPaceSecondsPerKm === 0 || paceSeconds < bestPaceSecondsPerKm) {
         bestPaceSecondsPerKm = paceSeconds;
       }
@@ -186,7 +218,13 @@ export const summarizeAchievements = (sessions: RunSession[]): AchievementSummar
   return {
     completedRuns: completed.length,
     totalDistanceMeters: Math.round(totalDistanceMeters),
+    totalDurationSeconds: Math.round(totalDurationSeconds),
+    averagePaceSecondsPerKm:
+      totalDistanceMeters > 0 && totalDurationSeconds > 0
+        ? Math.round((totalDurationSeconds / totalDistanceMeters) * 1000)
+        : 0,
     bestPaceSecondsPerKm,
+    longestRunMeters: Math.round(longestRunMeters),
     latestRunAt: completed.at(-1)?.endedAt ?? null,
   };
 };
@@ -504,6 +542,237 @@ export const decodeAchievementHash = (hash: string): DecodedAchievementShare | n
   return decodeAchievementShare(hash.slice(SHARE_HASH_PREFIX.length));
 };
 
+const getAchievementMask = (achievementIds: AchievementId[]): number => {
+  const uniqueIds = new Set(achievementIds);
+  let mask = 0;
+  for (const achievementId of uniqueIds) {
+    mask |= 1 << getAchievementIndex(achievementId);
+  }
+  return mask;
+};
+
+const getAchievementIdsFromMask = (mask: number): AchievementId[] =>
+  ACHIEVEMENT_DEFINITIONS
+    .filter((_, index) => (mask & (1 << index)) !== 0)
+    .map((definition) => definition.id);
+
+const validateCollectionPayload = (payload: AchievementCollectionSharePayload) => {
+  const achievementMask = getAchievementMask(payload.unlockedAchievementIds);
+  const supportedMask = (1 << ACHIEVEMENT_DEFINITIONS.length) - 1;
+  const nameBytes = new TextEncoder().encode(normalizeRunnerName(payload.runnerName));
+  const latestRunDay = Math.floor(payload.latestRunAt / DAY_MILLISECONDS) - PROTOCOL_EPOCH_DAY;
+  const validNumbers =
+    achievementMask > 0 &&
+    (achievementMask & ~supportedMask) === 0 &&
+    Number.isInteger(payload.completedRuns) &&
+    payload.completedRuns > 0 &&
+    payload.completedRuns <= MAX_RUNS &&
+    Number.isFinite(payload.totalDistanceMeters) &&
+    payload.totalDistanceMeters >= 0 &&
+    Math.round(payload.totalDistanceMeters / 10) <= MAX_DISTANCE_DECAMETERS &&
+    Number.isFinite(payload.totalDurationSeconds) &&
+    payload.totalDurationSeconds >= 0 &&
+    Math.round(payload.totalDurationSeconds / 10) <= MAX_DURATION_DECASECONDS &&
+    Number.isInteger(payload.averagePaceSecondsPerKm) &&
+    payload.averagePaceSecondsPerKm >= 0 &&
+    payload.averagePaceSecondsPerKm <= MAX_PACE_SECONDS &&
+    Number.isInteger(payload.bestPaceSecondsPerKm) &&
+    payload.bestPaceSecondsPerKm >= 0 &&
+    payload.bestPaceSecondsPerKm <= MAX_PACE_SECONDS &&
+    Number.isFinite(payload.longestRunMeters) &&
+    payload.longestRunMeters >= 0 &&
+    Math.round(payload.longestRunMeters / 10) <= MAX_DISTANCE_DECAMETERS &&
+    Number.isFinite(payload.latestRunAt) &&
+    latestRunDay >= 0 &&
+    latestRunDay <= MAX_ACHIEVEMENT_DAY_OFFSET;
+
+  if (!validNumbers || nameBytes.length > MAX_NAME_BYTES) {
+    throw new Error("Data ringkasan achievement berada di luar batas protokol.");
+  }
+
+  for (const achievementId of payload.unlockedAchievementIds) {
+    const definition = ACHIEVEMENT_DEFINITIONS[getAchievementIndex(achievementId)];
+    const { kind, target } = definition.requirement;
+    const satisfiesAchievement =
+      kind === "runs"
+        ? payload.completedRuns >= target
+        : kind === "distance"
+          ? payload.totalDistanceMeters >= target
+          : payload.bestPaceSecondsPerKm > 0 && payload.bestPaceSecondsPerKm <= target;
+    if (!satisfiesAchievement) {
+      throw new Error(`Statistik tidak memenuhi achievement ${definition.title}.`);
+    }
+  }
+};
+
+export const createAchievementCollectionSharePayload = (
+  progress: AchievementProgress[],
+  summary: AchievementSummary,
+  runnerName: string
+): AchievementCollectionSharePayload => {
+  const unlockedAchievementIds = progress
+    .filter((entry) => entry.unlocked)
+    .map((entry) => entry.definition.id);
+
+  if (unlockedAchievementIds.length === 0 || !summary.latestRunAt) {
+    throw new Error("Belum ada achievement yang dapat dibagikan.");
+  }
+
+  const payload: AchievementCollectionSharePayload = {
+    runnerName: normalizeRunnerName(runnerName),
+    unlockedAchievementIds,
+    completedRuns: summary.completedRuns,
+    totalDistanceMeters: summary.totalDistanceMeters,
+    totalDurationSeconds: summary.totalDurationSeconds,
+    averagePaceSecondsPerKm: summary.averagePaceSecondsPerKm,
+    bestPaceSecondsPerKm: summary.bestPaceSecondsPerKm,
+    longestRunMeters: summary.longestRunMeters,
+    latestRunAt: summary.latestRunAt,
+  };
+  validateCollectionPayload(payload);
+  return payload;
+};
+
+export const encodeAchievementCollectionShare = (
+  payload: AchievementCollectionSharePayload
+): string => {
+  const normalizedPayload: AchievementCollectionSharePayload = {
+    ...payload,
+    runnerName: normalizeRunnerName(payload.runnerName),
+    unlockedAchievementIds: [...new Set(payload.unlockedAchievementIds)],
+    completedRuns: Math.round(payload.completedRuns),
+    totalDistanceMeters: Math.round(payload.totalDistanceMeters),
+    totalDurationSeconds: Math.round(payload.totalDurationSeconds),
+    averagePaceSecondsPerKm: Math.round(payload.averagePaceSecondsPerKm),
+    bestPaceSecondsPerKm: Math.round(payload.bestPaceSecondsPerKm),
+    longestRunMeters: Math.round(payload.longestRunMeters),
+  };
+  validateCollectionPayload(normalizedPayload);
+
+  const latestRunDay =
+    Math.floor(normalizedPayload.latestRunAt / DAY_MILLISECONDS) - PROTOCOL_EPOCH_DAY;
+  const nameBytes = new TextEncoder().encode(normalizedPayload.runnerName);
+  const data: number[] = [
+    COLLECTION_SHARE_PROTOCOL_VERSION,
+    getAchievementMask(normalizedPayload.unlockedAchievementIds),
+  ];
+  writeVarUint(data, normalizedPayload.completedRuns);
+  writeVarUint(data, Math.round(normalizedPayload.totalDistanceMeters / 10));
+  writeVarUint(data, Math.round(normalizedPayload.totalDurationSeconds / 10));
+  writeVarUint(data, normalizedPayload.averagePaceSecondsPerKm);
+  writeVarUint(data, normalizedPayload.bestPaceSecondsPerKm);
+  writeVarUint(data, Math.round(normalizedPayload.longestRunMeters / 10));
+  writeVarUint(data, latestRunDay);
+  writeVarUint(data, nameBytes.length);
+  data.push(...nameBytes);
+
+  const checksum = calculateCrc16(data);
+  data.push((checksum >> 8) & 0xff, checksum & 0xff);
+  return encodeBase64Url(Uint8Array.from(data));
+};
+
+export const decodeAchievementCollectionShare = (
+  token: string
+): DecodedAchievementCollectionShare => {
+  const bytes = decodeBase64Url(token);
+  if (bytes.length < 12) {
+    throw new Error("Payload ringkasan achievement terlalu pendek.");
+  }
+
+  const dataEnd = bytes.length - 2;
+  const expectedChecksum = (bytes[dataEnd] << 8) | bytes[dataEnd + 1];
+  const actualChecksum = calculateCrc16(bytes, dataEnd);
+  if (expectedChecksum !== actualChecksum) {
+    throw new Error("Checksum ringkasan achievement tidak cocok.");
+  }
+
+  const protocolVersion = bytes[0];
+  if (protocolVersion !== COLLECTION_SHARE_PROTOCOL_VERSION) {
+    throw new Error("Versi ringkasan achievement belum didukung.");
+  }
+
+  const achievementMask = bytes[1];
+  const unlockedAchievementIds = getAchievementIdsFromMask(achievementMask);
+  if (unlockedAchievementIds.length === 0) {
+    throw new Error("Ringkasan achievement tidak memiliki badge.");
+  }
+
+  const cursor = { value: 2 };
+  const completedRuns = readVarUint(bytes, cursor, dataEnd);
+  const totalDistanceMeters = readVarUint(bytes, cursor, dataEnd) * 10;
+  const totalDurationSeconds = readVarUint(bytes, cursor, dataEnd) * 10;
+  const averagePaceSecondsPerKm = readVarUint(bytes, cursor, dataEnd);
+  const bestPaceSecondsPerKm = readVarUint(bytes, cursor, dataEnd);
+  const longestRunMeters = readVarUint(bytes, cursor, dataEnd) * 10;
+  const latestRunDay = readVarUint(bytes, cursor, dataEnd);
+  const nameLength = readVarUint(bytes, cursor, dataEnd);
+
+  if (nameLength > MAX_NAME_BYTES || cursor.value + nameLength !== dataEnd) {
+    throw new Error("Panjang nama pada ringkasan achievement tidak valid.");
+  }
+
+  let runnerName = "";
+  try {
+    runnerName = new TextDecoder("utf-8", { fatal: true }).decode(
+      bytes.slice(cursor.value, cursor.value + nameLength)
+    );
+  } catch {
+    throw new Error("Nama pelari pada ringkasan achievement tidak valid.");
+  }
+
+  const payload: AchievementCollectionSharePayload = {
+    runnerName: normalizeRunnerName(runnerName),
+    unlockedAchievementIds,
+    completedRuns,
+    totalDistanceMeters,
+    totalDurationSeconds,
+    averagePaceSecondsPerKm,
+    bestPaceSecondsPerKm,
+    longestRunMeters,
+    latestRunAt: (latestRunDay + PROTOCOL_EPOCH_DAY) * DAY_MILLISECONDS,
+  };
+  validateCollectionPayload(payload);
+
+  return {
+    ...payload,
+    achievements: unlockedAchievementIds.map(
+      (achievementId) => ACHIEVEMENT_DEFINITIONS[getAchievementIndex(achievementId)]
+    ),
+    protocolVersion,
+  };
+};
+
+export const decodeAchievementCollectionHash = (
+  hash: string
+): DecodedAchievementCollectionShare | null => {
+  if (!hash.startsWith(COLLECTION_SHARE_HASH_PREFIX)) {
+    return null;
+  }
+  return decodeAchievementCollectionShare(hash.slice(COLLECTION_SHARE_HASH_PREFIX.length));
+};
+
+export const buildAchievementCollectionShareUrl = (
+  baseUrl: string,
+  payload: AchievementCollectionSharePayload
+): string => {
+  const url = new URL(baseUrl);
+  url.search = "";
+  url.hash = `p=${encodeAchievementCollectionShare(payload)}`;
+  return url.toString();
+};
+
+export const buildAchievementCollectionShareText = (
+  payload: AchievementCollectionSharePayload,
+  trackName: string
+): string => {
+  const owner = normalizeRunnerName(payload.runnerName) || "Seorang pelari";
+  return `${owner} telah menyelesaikan ${payload.completedRuns} run di ${trackName}, ` +
+    `total ${formatDistance(payload.totalDistanceMeters)} dalam ` +
+    `${formatDuration(payload.totalDurationSeconds)}, pace rata-rata ` +
+    `${formatPace(payload.averagePaceSecondsPerKm / 60)}, dan membuka ` +
+    `${payload.unlockedAchievementIds.length} achievement.`;
+};
+
 export const buildAchievementShareUrl = (
   baseUrl: string,
   payload: AchievementSharePayload
@@ -582,6 +851,48 @@ export const shareAchievementLink = async ({
       return { outcome: "copied", url };
     } catch {
       // Continue to the DOM copy fallback for older/restricted browsers.
+    }
+  }
+
+  return {
+    outcome: copyTextFallback(url) ? "copied" : "unavailable",
+    url,
+  };
+};
+
+export const shareAchievementCollectionLink = async ({
+  payload,
+  baseUrl,
+  trackName,
+}: {
+  payload: AchievementCollectionSharePayload;
+  baseUrl: string;
+  trackName: string;
+}): Promise<AchievementShareResult> => {
+  const url = buildAchievementCollectionShareUrl(baseUrl, payload);
+  const data: ShareData = {
+    title: `Run Achievement Summary · ${trackName}`,
+    text: buildAchievementCollectionShareText(payload, trackName),
+    url,
+  };
+
+  if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+    try {
+      await navigator.share(data);
+      return { outcome: "shared", url };
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return { outcome: "cancelled", url };
+      }
+    }
+  }
+
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(url);
+      return { outcome: "copied", url };
+    } catch {
+      // Continue to the DOM copy fallback for restricted browsers.
     }
   }
 
