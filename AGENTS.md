@@ -92,13 +92,6 @@ Mendeskripsikan rancangan implementasi aplikasi jogging web untuk skenario **sin
 - Import `leaflet/dist/leaflet.css`.
 - Tile map untuk produk awal: OpenStreetMap/CARTO (sesuai legal usage).
 
-## Workflow Wajib Setelah Perubahan
-- Setelah setiap perubahan aplikasi selesai dan validasi relevan lulus, deploy ulang aplikasi menggunakan:
-  - `docker compose -f compose.yml up -d --build`
-- Verifikasi container setelah deploy menggunakan:
-  - `docker compose -f compose.yml ps`
-- Jika build atau deploy gagal, laporkan kegagalannya dan jangan menyatakan deployment berhasil.
-
 ## Acceptance Criteria
 - Aplikasi terbuka dari QR di smartphone dalam waktu singkat.
 - Peta tampil penuh layar.

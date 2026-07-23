@@ -30,7 +30,9 @@ import {
   ChevronDown,
   Sun,
   Moon,
-  Loader2
+  Loader2,
+  Award,
+  Download,
 } from "lucide-react";
 import type {
   RunSession,
@@ -63,6 +65,10 @@ import {
   parseSessionHistory,
   parseWarningHistory,
 } from "./lib/storage-utils";
+import {
+  downloadCompletionCertificate,
+  normalizeCertificateName,
+} from "./lib/certificate-utils";
 
 type GeolocationPermissionState = PermissionState | "unknown" | "unsupported";
 type GpsHealthState = "unknown" | "checking" | "ready" | "permission-denied" | "timeout" | "provider-off" | "error";
@@ -87,6 +93,7 @@ const TrackMapDynamic = dynamic(() => import("./components/TrackMap"), {
 
 const TRACK_KEY = "joging-track:session-history";
 const WARNING_LOG_KEY = "joging-track:warning-history";
+const CERTIFICATE_NAME_KEY = "joging-track:certificate-name";
 const SESSION_HISTORY_LIMIT = 25;
 const PUBLIC_BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 const TRACK_FILE = `${PUBLIC_BASE_PATH}/track.json`;
@@ -372,6 +379,10 @@ export default function HomePage() {
   // User Settings State
   const [useSoundAndHaptic, setUseSoundAndHaptic] = useState(true);
   const [mapTheme, setMapTheme] = useState<"dark" | "light">("light");
+  const [certificateName, setCertificateName] = useState("");
+  const [certificateNameError, setCertificateNameError] = useState<string | null>(null);
+  const [certificateStatus, setCertificateStatus] = useState("");
+  const [downloadingCertificateId, setDownloadingCertificateId] = useState<string | null>(null);
   const [insecureContext, setInsecureContext] = useState(false);
 
   // Simulation State
@@ -636,6 +647,10 @@ export default function HomePage() {
       if (themeVal === "dark" || themeVal === "light") {
         setMapTheme(themeVal as "dark" | "light");
       }
+      const savedCertificateName = localStorage.getItem(CERTIFICATE_NAME_KEY);
+      if (savedCertificateName) {
+        setCertificateName(normalizeCertificateName(savedCertificateName));
+      }
 
       setSessionHistory(
         parseSessionHistory(localStorage.getItem(TRACK_KEY), SESSION_HISTORY_LIMIT)
@@ -797,6 +812,61 @@ export default function HomePage() {
   const applySession = (next: RunSession) => {
     setSession(next);
     sessionRef.current = next;
+  };
+
+  const updateCertificateName = (value: string) => {
+    setCertificateName(value.slice(0, 60));
+    if (value.trim()) {
+      setCertificateNameError(null);
+    }
+  };
+
+  const persistCertificateName = () => {
+    const normalizedName = normalizeCertificateName(certificateName);
+    setCertificateName(normalizedName);
+    if (normalizedName) {
+      localStorage.setItem(CERTIFICATE_NAME_KEY, normalizedName);
+    }
+  };
+
+  const onDownloadCertificate = async (completedSession: RunSession) => {
+    if (!track || completedSession.status !== "finished") {
+      return;
+    }
+
+    const normalizedName = normalizeCertificateName(certificateName);
+    if (!normalizedName) {
+      const message = "Masukkan nama peserta sebelum mengunduh sertifikat.";
+      setCertificateNameError(message);
+      setCertificateStatus(message);
+      enqueueToast({ title: "Nama Diperlukan", message, severity: "warning" });
+      return;
+    }
+
+    setCertificateName(normalizedName);
+    setCertificateNameError(null);
+    setCertificateStatus("Sedang membuat sertifikat...");
+    setDownloadingCertificateId(completedSession.sessionId);
+    localStorage.setItem(CERTIFICATE_NAME_KEY, normalizedName);
+
+    try {
+      const filename = await downloadCompletionCertificate({
+        participantName: normalizedName,
+        trackName: track.name,
+        session: completedSession,
+      });
+      const message = `Sertifikat ${filename} mulai diunduh.`;
+      setCertificateStatus(message);
+      enqueueToast({ title: "Sertifikat Siap", message, severity: "info" });
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "Sertifikat gagal dibuat. Silakan coba lagi.";
+      setCertificateStatus(message);
+      enqueueToast({ title: "Sertifikat Gagal", message, severity: "error" });
+    } finally {
+      setDownloadingCertificateId(null);
+    }
   };
 
   const resetProgressTracking = () => {
@@ -1136,6 +1206,8 @@ export default function HomePage() {
       averagePacePerKm: average,
       persisted: false,
     });
+    setActiveTab("metrics");
+    setIsSheetCollapsed(false);
     resetProgressTracking();
 
     setLocationError(null);
@@ -1824,6 +1896,9 @@ export default function HomePage() {
 
   return (
     <main className={`track-shell ${isSheetCollapsed ? "sheet-collapsed" : ""}`}>
+      <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {certificateStatus}
+      </span>
       {/* Hero: only visible on desktop */}
       <header className="hero">
         <div className="hero-copy">
@@ -2176,6 +2251,51 @@ export default function HomePage() {
                 </div>
               </div>
 
+              {session.status === "finished" ? (
+                <section className="certificate-download-card" aria-labelledby="certificate-current-title">
+                  <div className="certificate-card-heading">
+                    <Award size={24} aria-hidden="true" />
+                    <div>
+                      <h2 id="certificate-current-title">Sertifikat Rute Selesai</h2>
+                      <p>Isi nama peserta, lalu unduh sertifikat PNG dari sesi ini.</p>
+                    </div>
+                  </div>
+                  <label htmlFor="certificate-name-current">Nama pada sertifikat</label>
+                  <input
+                    id="certificate-name-current"
+                    type="text"
+                    value={certificateName}
+                    maxLength={60}
+                    autoComplete="name"
+                    onChange={(event) => updateCertificateName(event.target.value)}
+                    onBlur={persistCertificateName}
+                    aria-invalid={Boolean(certificateNameError)}
+                    aria-describedby={certificateNameError ? "certificate-name-current-error" : "certificate-current-help"}
+                  />
+                  <span id="certificate-current-help" className="certificate-field-help">
+                    Nama hanya disimpan pada browser perangkat ini.
+                  </span>
+                  {certificateNameError ? (
+                    <span id="certificate-name-current-error" className="certificate-field-error" role="alert">
+                      {certificateNameError}
+                    </span>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="btn-certificate-download"
+                    onClick={() => onDownloadCertificate(session)}
+                    disabled={downloadingCertificateId === session.sessionId}
+                  >
+                    {downloadingCertificateId === session.sessionId ? (
+                      <Loader2 size={18} className="animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Download size={18} aria-hidden="true" />
+                    )}
+                    <span>{downloadingCertificateId === session.sessionId ? "Membuat Sertifikat..." : "Unduh Sertifikat PNG"}</span>
+                  </button>
+                </section>
+              ) : null}
+
               {insecureContext ? (
                 <div className="alert warning-alert">
                   <AlertTriangle size={18} className="alert-icon-svg" />
@@ -2226,6 +2346,30 @@ export default function HomePage() {
             {/* 3. RUN HISTORY SECTION */}
             <div className={`panel-section section-history ${activeTab === "history" ? "mobile-active" : "mobile-hidden"}`}>
               <div className="panel-section-title">Riwayat Sesi</div>
+              {sessionHistory.some((entry) => entry.status === "finished") ? (
+                <div className="certificate-history-profile">
+                  <label htmlFor="certificate-name-history">Nama pada sertifikat</label>
+                  <input
+                    id="certificate-name-history"
+                    type="text"
+                    value={certificateName}
+                    maxLength={60}
+                    autoComplete="name"
+                    onChange={(event) => updateCertificateName(event.target.value)}
+                    onBlur={persistCertificateName}
+                    aria-invalid={Boolean(certificateNameError)}
+                    aria-describedby={certificateNameError ? "certificate-name-history-error" : "certificate-history-help"}
+                  />
+                  <span id="certificate-history-help" className="certificate-field-help">
+                    Digunakan untuk sertifikat sesi selesai di bawah ini.
+                  </span>
+                  {certificateNameError ? (
+                    <span id="certificate-name-history-error" className="certificate-field-error" role="alert">
+                      {certificateNameError}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
               <div className="history-list">
                 {sessionHistory.length === 0 ? (
                   <div className="empty-state">
@@ -2262,6 +2406,22 @@ export default function HomePage() {
                             <strong>{formatPace(entry.averagePacePerKm)}</strong>
                           </div>
                         </div>
+                        {entry.status === "finished" ? (
+                          <button
+                            type="button"
+                            className="btn-history-certificate"
+                            onClick={() => onDownloadCertificate(entry)}
+                            disabled={downloadingCertificateId === entry.sessionId}
+                            aria-label={`Unduh sertifikat sesi ${endLabel}`}
+                          >
+                            {downloadingCertificateId === entry.sessionId ? (
+                              <Loader2 size={15} className="animate-spin" aria-hidden="true" />
+                            ) : (
+                              <Download size={15} aria-hidden="true" />
+                            )}
+                            <span>{downloadingCertificateId === entry.sessionId ? "Membuat..." : "Unduh Sertifikat"}</span>
+                          </button>
+                        ) : null}
                       </div>
                     );
                   })
