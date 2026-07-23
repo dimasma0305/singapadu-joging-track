@@ -1,5 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { buildRunnerProfileSvg } from "./runner-profile-image";
+import {
+  buildRunnerProfileRouteGeometry,
+  buildRunnerProfileSvg,
+} from "./runner-profile-image";
+
+const routePoints = [
+  { lat: -8.5797866, lng: 115.2606812 },
+  { lat: -8.5850807, lng: 115.261076 },
+  { lat: -8.5848937, lng: 115.2575094 },
+  { lat: -8.5795874, lng: 115.2579657 },
+  { lat: -8.5797866, lng: 115.2606812 },
+];
 
 describe("runner profile social artwork", () => {
   test("builds a 1080x1350 profile containing every unlocked achievement", () => {
@@ -26,11 +37,14 @@ describe("runner profile social artwork", () => {
       },
       trackName: "Singapadu Jogging Loop",
       profileUrl: "https://example.com/#p=profile",
+      routePoints,
     });
 
     expect(svg).toContain('width="1080"');
     expect(svg).toContain('height="1350"');
-    expect(svg).toContain("SINGAPADU RUNNER PROFILE");
+    expect(svg).toContain("SINGAPADU JOGGING");
+    expect(svg).toContain("ALL-TIME RUNNING STATS");
+    expect(svg).toContain('stroke="#fc5200"');
     expect(svg).toContain("58.50");
     expect(svg).toContain("Langkah Pertama");
     expect(svg).toContain("Legenda Rute");
@@ -53,10 +67,36 @@ describe("runner profile social artwork", () => {
       },
       trackName: 'Rute "Utama" & Desa',
       profileUrl: "https://example.com/#p=profile",
+      routePoints,
     });
 
     expect(svg).toContain("&lt;Made &amp; Ayu&gt;");
     expect(svg).toContain("Rute &quot;Utama&quot; &amp; Desa");
     expect(svg).not.toContain("<Made & Ayu>");
+  });
+
+  test("normalizes the shared route into the requested map viewport", () => {
+    const geometry = buildRunnerProfileRouteGeometry(
+      routePoints,
+      640,
+      280,
+      36
+    );
+    const coordinates = geometry.points.split(" ").map((value) =>
+      value.split(",").map(Number)
+    );
+
+    expect(coordinates).toHaveLength(routePoints.length);
+    expect(
+      coordinates.every(
+        ([x, y]) =>
+          x >= 36 &&
+          x <= 604 &&
+          y >= 36 &&
+          y <= 244
+      )
+    ).toBe(true);
+    expect(geometry.start.x).toBeCloseTo(geometry.end.x, 5);
+    expect(geometry.start.y).toBeCloseTo(geometry.end.y, 5);
   });
 });

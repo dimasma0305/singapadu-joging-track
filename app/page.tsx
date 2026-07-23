@@ -90,7 +90,10 @@ import {
   type AchievementTier,
   type DecodedAchievementCollectionShare,
 } from "./lib/achievement-utils";
-import { shareRunnerProfilePng } from "./lib/runner-profile-image";
+import {
+  buildRunnerProfileRouteGeometry,
+  shareRunnerProfilePng,
+} from "./lib/runner-profile-image";
 import { resolvePrimarySessionControl } from "./lib/session-control-utils";
 import {
   buildFunctionalTestHistoryUpdate,
@@ -232,6 +235,7 @@ const RunnerProfileCard = ({
   bestPaceSecondsPerKm,
   longestRunMeters,
   latestRunAt,
+  routePoints,
 }: {
   runnerName: string;
   trackName: string;
@@ -243,67 +247,163 @@ const RunnerProfileCard = ({
   bestPaceSecondsPerKm: number;
   longestRunMeters: number;
   latestRunAt: number | null;
-}) => (
-  <article className="run-achievement-summary" aria-label="Profil lengkap runner">
-    <header className="run-summary-header">
-      <span className="run-summary-sport-icon">
-        {getRunnerInitials(runnerName)}
-      </span>
-      <div>
-        <span className="run-summary-kicker">Singapadu Runner Profile</span>
-        <strong>{runnerName || "Pelari Singapadu"}</strong>
-        <small>{trackName} · Statistik all-time</small>
+  routePoints: readonly TrackWaypoint[];
+}) => {
+  const routeGeometry = buildRunnerProfileRouteGeometry(
+    routePoints,
+    640,
+    280,
+    36
+  );
+  const endpointsOverlap =
+    Math.hypot(
+      routeGeometry.start.x - routeGeometry.end.x,
+      routeGeometry.start.y - routeGeometry.end.y
+    ) < 14;
+  const latestDate = latestRunAt
+    ? new Date(latestRunAt).toLocaleDateString("id-ID", {
+        dateStyle: "long",
+      })
+    : "Belum ada run selesai";
+  const averagePace =
+    averagePaceSecondsPerKm > 0
+      ? formatPace(averagePaceSecondsPerKm / 60).replace(" /km", "")
+      : "--";
+  const bestPace =
+    bestPaceSecondsPerKm > 0
+      ? formatPace(bestPaceSecondsPerKm / 60).replace(" /km", "")
+      : "--";
+
+  return (
+    <article className="run-achievement-summary" aria-label="Profil lengkap runner">
+      <header className="run-summary-header">
+        <span className="run-summary-sport-icon">
+          {getRunnerInitials(runnerName)}
+        </span>
+        <div>
+          <span className="run-summary-kicker">Singapadu Jogging</span>
+          <strong>{runnerName || "Pelari Singapadu"}</strong>
+          <small>{trackName}</small>
+        </div>
+        <span className="run-summary-activity-pill">
+          <Activity size={13} aria-hidden="true" />
+          Run
+        </span>
+      </header>
+
+      <section className="run-summary-route" aria-label={`Visual rute ${trackName}`}>
+        <svg
+          className="run-summary-route-map"
+          viewBox="0 0 640 280"
+          role="img"
+          aria-label={`Route trace ${trackName}`}
+        >
+          <defs>
+            <pattern id="profile-route-grid" width="42" height="42" patternUnits="userSpaceOnUse">
+              <path d="M 42 0 L 0 0 0 42" className="run-summary-map-grid" />
+            </pattern>
+          </defs>
+          <rect width="640" height="280" className="run-summary-map-background" />
+          <rect width="640" height="280" fill="url(#profile-route-grid)" />
+          <path d="M -20 72 C 116 12, 236 96, 358 34 S 548 22, 680 104" className="run-summary-map-road broad" />
+          <path d="M 84 -20 C 162 76, 130 182, 248 306" className="run-summary-map-road" />
+          <path d="M 474 -30 C 416 80, 528 154, 444 310" className="run-summary-map-road" />
+          <path d="M -20 226 C 134 180, 260 246, 394 194 S 546 174, 672 238" className="run-summary-map-road minor" />
+          <polyline
+            points={routeGeometry.points}
+            className="run-summary-route-halo"
+          />
+          <polyline
+            points={routeGeometry.points}
+            className="run-summary-route-line"
+          />
+          {endpointsOverlap ? (
+            <>
+              <circle
+                cx={routeGeometry.end.x}
+                cy={routeGeometry.end.y}
+                r="11"
+                className="run-summary-route-marker-halo"
+              />
+              <circle
+                cx={routeGeometry.end.x}
+                cy={routeGeometry.end.y}
+                r="7"
+                className="run-summary-route-marker finish"
+              />
+            </>
+          ) : (
+            <>
+              <circle
+                cx={routeGeometry.start.x}
+                cy={routeGeometry.start.y}
+                r="7"
+                className="run-summary-route-marker start"
+              />
+              <circle
+                cx={routeGeometry.end.x}
+                cy={routeGeometry.end.y}
+                r="7"
+                className="run-summary-route-marker finish"
+              />
+            </>
+          )}
+        </svg>
+        <div className="run-summary-route-caption">
+          <span><MapPin size={13} aria-hidden="true" /> Singapadu Tengah, Bali</span>
+          <strong>All-time profile</strong>
+        </div>
+      </section>
+
+      <div className="run-summary-primary-stats">
+        <span>
+          <strong>{(totalDistanceMeters / 1000).toFixed(2)}</strong>
+          <small>km</small>
+          <em>Distance</em>
+        </span>
+        <span>
+          <strong>{formatDuration(totalDurationSeconds)}</strong>
+          <em>Moving time</em>
+        </span>
+        <span>
+          <strong>{averagePace}</strong>
+          <small>/km</small>
+          <em>Avg pace</em>
+        </span>
       </div>
-    </header>
 
-    <div className="run-summary-distance">
-      <strong>{(totalDistanceMeters / 1000).toFixed(2)}</strong>
-      <span>Kilometer all-time</span>
-    </div>
-
-    <div className="run-summary-stats">
-      <span><strong>{completedRuns}</strong>Run</span>
-      <span><strong>{formatDuration(totalDurationSeconds)}</strong>Waktu total</span>
-      <span>
-        <strong>{averagePaceSecondsPerKm > 0 ? formatPace(averagePaceSecondsPerKm / 60) : "--"}</strong>
-        Avg pace
-      </span>
-      <span>
-        <strong>{bestPaceSecondsPerKm > 0 ? formatPace(bestPaceSecondsPerKm / 60) : "--"}</strong>
-        Max / best pace
-      </span>
-      <span><strong>{formatDistance(longestRunMeters)}</strong>Run terjauh</span>
-    </div>
-
-    <section className="run-summary-trophies" aria-label={`${achievements.length} achievement terbuka`}>
-      <div className="run-summary-trophies-heading">
-        <span>Trophy Case</span>
-        <strong>{achievements.length} terbuka</strong>
+      <div className="run-summary-secondary-stats">
+        <span><strong>{completedRuns}</strong><small>Runs</small></span>
+        <span><strong>{bestPace}</strong><small>Best pace</small></span>
+        <span><strong>{formatDistance(longestRunMeters)}</strong><small>Longest</small></span>
       </div>
-      <div className="run-summary-badge-grid">
-        {achievements.map((achievement) => (
-          <span
-            key={achievement.id}
-            className={`run-summary-badge tier-${achievement.tier}`}
-            title={achievement.title}
-          >
-            <AchievementIcon name={achievement.icon} size={20} />
-            <small>{achievement.title}</small>
-          </span>
-        ))}
-      </div>
-    </section>
 
-    <footer className="run-summary-footer">
-      <span>
-        {latestRunAt
-          ? new Date(latestRunAt).toLocaleDateString("id-ID", { dateStyle: "long" })
-          : "Belum ada run selesai"}
-      </span>
-      <strong>KKN PPM PNB · 2026</strong>
-    </footer>
-  </article>
-);
+      <section className="run-summary-trophies" aria-label={`${achievements.length} achievement terbuka`}>
+        <div className="run-summary-trophies-heading">
+          <span>Achievements</span>
+          <strong>{achievements.length} unlocked</strong>
+        </div>
+        <div className="run-summary-badge-grid">
+          {achievements.map((achievement) => (
+            <span
+              key={achievement.id}
+              className={`run-summary-badge tier-${achievement.tier}`}
+              title={achievement.title}
+            >
+              <AchievementIcon name={achievement.icon} size={20} />
+              <small>{achievement.title}</small>
+            </span>
+          ))}
+        </div>
+      </section>
+
+      <footer className="run-summary-footer">
+        <span>Updated {latestDate}</span>
+        <strong>KKN PPM PNB · 2026</strong>
+      </footer>
+    </article>
+  );
+};
 
 const isGeolocationPositionError = (error: unknown): error is GeolocationPositionError => {
   if (typeof error !== "object" || error === null || !("code" in error)) {
@@ -1203,6 +1303,7 @@ export default function HomePage() {
         payload,
         trackName: track.name,
         profileUrl,
+        routePoints: track.waypoints,
       });
       const messages = {
         shared: "PNG profil dikirim ke menu share perangkat.",
@@ -2688,6 +2789,7 @@ export default function HomePage() {
             bestPaceSecondsPerKm={sharedAchievementCollection.bestPaceSecondsPerKm}
             longestRunMeters={sharedAchievementCollection.longestRunMeters}
             latestRunAt={sharedAchievementCollection.latestRunAt}
+            routePoints={track?.waypoints ?? []}
           />
           <p className="shared-run-summary-note">
             Profil ini membawa seluruh achievement terbuka dan statistik all-time melalui URL compact
@@ -3165,6 +3267,7 @@ export default function HomePage() {
                     bestPaceSecondsPerKm={achievementSummary.bestPaceSecondsPerKm}
                     longestRunMeters={achievementSummary.longestRunMeters}
                     latestRunAt={achievementSummary.latestRunAt}
+                    routePoints={track?.waypoints ?? []}
                   />
                   <div className="runner-profile-share-actions">
                     <button
