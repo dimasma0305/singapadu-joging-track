@@ -7,8 +7,9 @@ Aplikasi web untuk single-QR jogging track:
 - progress & pace
 - area warning berbasis jarak (info/warning/critical)
 - achievement lokal berdasarkan jumlah run, total jarak, dan pace
-- Trophy Case dan ringkasan seluruh achievement + statistik lari
-- share achievement individual maupun ringkasan melalui URL ringkas tanpa backend
+- profil runner dengan Trophy Case dan statistik all-time
+- share profil lengkap melalui URL ringkas atau PNG sosial 1080 × 1350
+- satu tombol sesi kontekstual untuk start, pause, resume, dan finish
 - uji fungsional otomatis dari menu Setelan
 
 ## Menjalankan
@@ -36,16 +37,21 @@ Buka: `http://localhost:3000/?track=main`
 - `app/components/TrackMap.tsx` → visualisasi Leaflet
 - `app/lib/track-utils.ts` → kalkulasi geospasial dasar
 - `app/lib/achievement-utils.ts` → milestone achievement dan protokol URL share
+- `app/lib/runner-profile-image.ts` → generator dan share PNG profil
 
-## Tautan achievement
+## Profil achievement yang dapat dibagikan
 
-- `#a=<token>` membagikan satu achievement.
-- `#p=<token>` membagikan Trophy Case lengkap, jumlah run, total kilometer,
-  durasi, pace rata-rata, best pace, run terjauh, nama, dan tanggal.
+Tombol share hanya tersedia pada profil lengkap, bukan pada achievement
+individual. Fragmen `#p=<token>` membawa seluruh Trophy Case, jumlah run, total
+kilometer, durasi, pace rata-rata, best pace, run terjauh, dan tanggal.
+Profil memakai identitas netral **Pelari Singapadu** dan tidak memiliki input nama.
 
-Keduanya memakai protokol biner versi 1 dengan varint, bitmask achievement,
+Payload memakai protokol biner versi 1 dengan varint, bitmask achievement,
 kuantisasi angka, checksum CRC-16, dan Base64URL tanpa padding. Fragmen tidak
-dikirim ke server dan dapat dibaca sepenuhnya di browser penerima.
+dikirim ke server dan dapat dibaca sepenuhnya di browser penerima. Tombol
+**Bagikan PNG** membuat artwork portrait 1080 × 1350; di perangkat yang mendukung
+Web Share file akan diteruskan ke aplikasi sosial, sedangkan browser lain
+mengunduh berkas PNG.
 
 ## Uji fungsional otomatis
 

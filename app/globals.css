@@ -629,28 +629,45 @@ main.track-shell {
 
 .shared-run-summary-overlay {
   position: fixed;
-  top: max(10px, env(safe-area-inset-top, 0px));
-  left: 50%;
+  inset: 0;
   z-index: calc(var(--z-toast) + 240);
-  width: min(440px, calc(100vw - 20px));
-  max-height: calc(100dvh - 20px);
+  width: 100%;
+  height: 100dvh;
   overflow-y: auto;
-  transform: translateX(-50%);
-  border: 1px solid rgba(255, 90, 31, 0.45);
-  border-radius: 22px;
-  background: #080b12;
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.72);
-  padding: 10px;
-  animation: shared-achievement-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  background:
+    radial-gradient(circle at 50% 0%, rgba(255, 90, 31, 0.14), transparent 38%),
+    #060910;
+  padding:
+    calc(58px + env(safe-area-inset-top, 0px))
+    10px
+    calc(16px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  animation: runner-profile-page-in 0.25s ease-out;
+}
+
+.shared-run-summary-overlay .run-achievement-summary {
+  width: min(440px, 100%);
+}
+
+@keyframes runner-profile-page-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 .shared-run-summary-close {
-  position: sticky;
-  top: 0;
+  position: fixed;
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  right: 12px;
   z-index: 2;
   width: 40px;
   height: 40px;
-  margin: 0 0 -40px auto;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 11px;
   background: rgba(8, 11, 18, 0.92);
@@ -662,135 +679,10 @@ main.track-shell {
 }
 
 .shared-run-summary-note {
+  width: min(440px, 100%);
   color: #cbd5e1;
   padding: 9px 8px 2px;
   font-size: 0.66rem;
-  line-height: 1.4;
-  text-align: center;
-}
-
-.shared-achievement-card {
-  position: fixed;
-  top: max(16px, env(safe-area-inset-top, 0px));
-  left: 50%;
-  z-index: calc(var(--z-toast) + 200);
-  width: min(420px, calc(100vw - 24px));
-  max-height: calc(100dvh - 32px);
-  overflow-y: auto;
-  transform: translateX(-50%);
-  border: 1px solid var(--achievement-border);
-  border-radius: 20px;
-  background:
-    radial-gradient(circle at 8% 0%, var(--achievement-accent-soft), transparent 45%),
-    #040a18;
-  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.65);
-  backdrop-filter: blur(20px) saturate(150%);
-  padding: 16px;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 12px;
-  animation: shared-achievement-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-
-@keyframes shared-achievement-in {
-  0% {
-    transform: translate(-50%, -24px) scale(0.96);
-    opacity: 0;
-  }
-
-  100% {
-    transform: translate(-50%, 0) scale(1);
-    opacity: 1;
-  }
-}
-
-.shared-achievement-close {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 40px;
-  height: 40px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 10px;
-  background: rgba(15, 23, 42, 0.8);
-  color: #f8fafc;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
-
-.shared-achievement-icon {
-  width: 58px;
-  height: 58px;
-  border: 1px solid var(--achievement-border);
-  border-radius: 16px;
-  background: var(--achievement-accent-soft);
-  color: var(--achievement-accent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 0 24px var(--achievement-accent-soft);
-}
-
-.shared-achievement-copy {
-  min-width: 0;
-  padding-right: 34px;
-}
-
-.shared-achievement-kicker {
-  color: var(--achievement-accent);
-  font-size: 0.66rem;
-  font-weight: 800;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-}
-
-.shared-achievement-copy h2 {
-  color: #fff;
-  font-size: 1.08rem;
-  line-height: 1.25;
-  margin-top: 2px;
-}
-
-.shared-achievement-copy p {
-  color: #cbd5e1;
-  font-size: 0.75rem;
-  line-height: 1.4;
-  margin-top: 3px;
-}
-
-.shared-achievement-stats {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.shared-achievement-stats span {
-  min-width: 0;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  background: rgba(15, 23, 42, 0.72);
-  color: #cbd5e1;
-  padding: 8px 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  font-size: 0.62rem;
-  text-align: center;
-}
-
-.shared-achievement-stats strong {
-  color: #fff;
-  font-size: 0.76rem;
-  overflow-wrap: anywhere;
-}
-
-.shared-achievement-meta {
-  grid-column: 1 / -1;
-  color: #cbd5e1;
-  font-size: 0.65rem;
   line-height: 1.4;
   text-align: center;
 }
@@ -902,12 +794,14 @@ main.track-shell {
   transition: all 0.2s ease;
 }
 
-.btn-primary-action.start {
+.btn-primary-action.start,
+.btn-primary-action.resume {
   background: linear-gradient(135deg, #10b981 0%, #059669 100%);
   box-shadow: 0 4px 15px rgba(16, 185, 129, 0.25);
 }
 
-.btn-primary-action.start:hover {
+.btn-primary-action.start:hover,
+.btn-primary-action.resume:hover {
   filter: brightness(1.15);
   box-shadow: 0 6px 20px rgba(16, 185, 129, 0.35);
   transform: translateY(-1px);
@@ -935,23 +829,15 @@ main.track-shell {
   transform: translateY(-1px);
 }
 
-.btn-primary-action-finish {
-  min-width: 92px;
-  height: 50px;
-  flex: 0 0 92px;
-  border: none;
-  border-radius: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  color: #fff;
+.btn-primary-action.finish {
   background: linear-gradient(135deg, #f43f5e 0%, #e11d48 100%);
   box-shadow: 0 4px 15px rgba(244, 63, 94, 0.25);
-  font: inherit;
-  font-size: 0.82rem;
-  font-weight: 800;
-  cursor: pointer;
+  animation: heartbeat-warning 2.5s infinite ease-in-out;
+}
+
+.btn-primary-action.finish:hover {
+  filter: brightness(1.12);
+  transform: translateY(-1px);
 }
 
 .checkpoint-popup-content {
@@ -1574,8 +1460,8 @@ main.track-shell {
 }
 
 .run-summary-sport-icon {
-  width: 42px;
-  height: 42px;
+  width: 46px;
+  height: 46px;
   flex: 0 0 auto;
   border-radius: 50%;
   background: var(--run-summary-orange);
@@ -1583,6 +1469,9 @@ main.track-shell {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  font-size: 0.9rem;
+  font-weight: 900;
+  letter-spacing: -0.02em;
 }
 
 .run-summary-header > div {
@@ -1695,34 +1584,35 @@ main.track-shell {
 
 .run-summary-badge-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 7px;
 }
 
 .run-summary-badge {
   min-width: 0;
-  min-height: 64px;
+  min-height: 58px;
   border: 1px solid var(--achievement-border, rgba(255, 255, 255, 0.15));
   border-radius: 11px;
   background: var(--achievement-accent-soft, rgba(255, 255, 255, 0.06));
   color: var(--achievement-accent, #fff);
-  padding: 7px 3px;
+  padding: 8px 9px;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  justify-content: center;
-  gap: 4px;
-  text-align: center;
+  justify-content: flex-start;
+  gap: 8px;
+  text-align: left;
+}
+
+.run-summary-badge > svg {
+  flex: 0 0 auto;
 }
 
 .run-summary-badge small {
-  width: 100%;
-  overflow: hidden;
   color: #e2e8f0;
-  font-size: 0.53rem;
-  line-height: 1.15;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 0.59rem;
+  font-weight: 700;
+  line-height: 1.25;
 }
 
 .run-summary-footer {
@@ -1756,6 +1646,26 @@ main.track-shell {
   font-size: 0.8rem;
   font-weight: 800;
   cursor: pointer;
+}
+
+.runner-profile-share-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.runner-profile-share-actions .btn-run-summary-share {
+  min-width: 0;
+  padding-inline: 8px;
+}
+
+.btn-run-summary-share.image {
+  border-color: #7dd3fc;
+  background: #075985;
+}
+
+.btn-run-summary-share.image:hover {
+  background: #0369a1;
 }
 
 .btn-run-summary-share:hover {
@@ -1852,9 +1762,7 @@ main.track-shell {
   grid-column: 1 / -1;
 }
 
-.btn-achievement-share,
-.btn-achievement-view,
-.btn-achievement-card-share {
+.btn-achievement-view {
   min-height: 44px;
   border-radius: 9px;
   padding: 9px 12px;
@@ -1869,38 +1777,18 @@ main.track-shell {
   transition: background 0.2s ease, transform 0.2s ease;
 }
 
-.btn-achievement-share,
-.btn-achievement-card-share {
-  border: 1px solid #facc15;
-  background: #854d0e;
-  color: #fff;
-}
-
 .btn-achievement-view {
   border: 1px solid #38bdf8;
   background: #075985;
   color: #fff;
 }
 
-.btn-achievement-share:hover,
-.btn-achievement-card-share:hover {
-  background: #713f12;
-}
-
 .btn-achievement-view:hover {
   background: #0c4a6e;
 }
 
-.btn-achievement-share:active,
-.btn-achievement-view:active,
-.btn-achievement-card-share:active {
+.btn-achievement-view:active {
   transform: translateY(1px);
-}
-
-.btn-achievement-share:disabled,
-.btn-achievement-card-share:disabled {
-  cursor: wait;
-  opacity: 0.72;
 }
 
 .achievement-showcase {
@@ -1967,45 +1855,6 @@ main.track-shell {
 .achievement-summary-grid span {
   color: #cbd5e1;
   font-size: 0.68rem;
-}
-
-.achievement-profile {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
-  background: rgba(2, 6, 23, 0.42);
-  padding: 12px;
-}
-
-.achievement-profile label {
-  color: #f8fafc;
-  font-size: 0.78rem;
-  font-weight: 700;
-}
-
-.achievement-profile label span {
-  color: #cbd5e1;
-  font-weight: 500;
-}
-
-.achievement-profile input {
-  width: 100%;
-  min-height: 44px;
-  border: 1px solid #64748b;
-  border-radius: 9px;
-  background: #050b18;
-  color: #f8fafc;
-  padding: 10px 12px;
-  font: inherit;
-  font-size: 0.9rem;
-}
-
-.achievement-field-help {
-  color: #cbd5e1;
-  font-size: 0.7rem;
-  line-height: 1.4;
 }
 
 .achievement-grid {
@@ -2099,7 +1948,7 @@ main.track-shell {
 .achievement-card-footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 8px;
   margin-top: 2px;
 }
@@ -2112,12 +1961,6 @@ main.track-shell {
   color: var(--achievement-accent);
   font-size: 0.68rem;
   font-weight: 700;
-}
-
-.btn-achievement-card-share {
-  min-height: 40px;
-  padding: 7px 10px;
-  font-size: 0.72rem;
 }
 
 .run-history-title {
@@ -2720,14 +2563,6 @@ input:checked + .toggle-slider:before {
   .btn-primary-action-recenter {
     width: 45px;
     height: 45px;
-    border-radius: 12px;
-  }
-
-  .btn-primary-action-finish {
-    width: 84px;
-    height: 45px;
-    min-width: 84px;
-    flex-basis: 84px;
     border-radius: 12px;
   }
 

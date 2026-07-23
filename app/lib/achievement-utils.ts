@@ -47,24 +47,10 @@ export type AchievementProgress = {
   progressLabel: string;
 };
 
-export type AchievementSharePayload = {
-  achievementId: AchievementId;
-  runnerName: string;
-  completedRuns: number;
-  totalDistanceMeters: number;
-  bestPaceSecondsPerKm: number;
-  achievedAt: number;
-};
+export type ProfileShareOutcome = "shared" | "copied" | "cancelled" | "unavailable";
 
-export type DecodedAchievementShare = AchievementSharePayload & {
-  achievement: AchievementDefinition;
-  protocolVersion: number;
-};
-
-export type AchievementShareOutcome = "shared" | "copied" | "cancelled" | "unavailable";
-
-export type AchievementShareResult = {
-  outcome: AchievementShareOutcome;
+export type ProfileShareResult = {
+  outcome: ProfileShareOutcome;
   url: string;
 };
 
@@ -85,8 +71,6 @@ export type DecodedAchievementCollectionShare = AchievementCollectionSharePayloa
   protocolVersion: number;
 };
 
-const SHARE_PROTOCOL_VERSION = 1;
-const SHARE_HASH_PREFIX = "#a=";
 const COLLECTION_SHARE_PROTOCOL_VERSION = 1;
 const COLLECTION_SHARE_HASH_PREFIX = "#p=";
 const DAY_MILLISECONDS = 86_400_000;
@@ -307,25 +291,6 @@ export const buildAchievementProgress = (sessions: RunSession[]): AchievementPro
   });
 };
 
-export const createAchievementSharePayload = (
-  progress: AchievementProgress,
-  summary: AchievementSummary,
-  runnerName: string
-): AchievementSharePayload => {
-  if (!progress.unlocked || !progress.unlockedAt) {
-    throw new Error("Achievement ini belum terbuka.");
-  }
-
-  return {
-    achievementId: progress.definition.id,
-    runnerName: normalizeRunnerName(runnerName),
-    completedRuns: summary.completedRuns,
-    totalDistanceMeters: summary.totalDistanceMeters,
-    bestPaceSecondsPerKm: summary.bestPaceSecondsPerKm,
-    achievedAt: progress.unlockedAt,
-  };
-};
-
 const writeVarUint = (bytes: number[], value: number) => {
   let remaining = Math.max(0, Math.floor(value));
   do {
@@ -401,145 +366,10 @@ const decodeBase64Url = (token: string): Uint8Array => {
 
 const getAchievementIndex = (achievementId: AchievementId): number => {
   const index = ACHIEVEMENT_DEFINITIONS.findIndex((entry) => entry.id === achievementId);
-  if (index < 0 || index > 15) {
+  if (index < 0 || index > 7) {
     throw new Error("Achievement tidak didukung protokol share.");
   }
   return index;
-};
-
-const validatePayload = (payload: AchievementSharePayload) => {
-  const definition = ACHIEVEMENT_DEFINITIONS[getAchievementIndex(payload.achievementId)];
-  const nameBytes = new TextEncoder().encode(normalizeRunnerName(payload.runnerName));
-  const achievedDay = Math.floor(payload.achievedAt / DAY_MILLISECONDS) - PROTOCOL_EPOCH_DAY;
-  const validNumbers =
-    Number.isInteger(payload.completedRuns) &&
-    payload.completedRuns >= 0 &&
-    payload.completedRuns <= MAX_RUNS &&
-    Number.isFinite(payload.totalDistanceMeters) &&
-    payload.totalDistanceMeters >= 0 &&
-    Math.round(payload.totalDistanceMeters / 10) <= MAX_DISTANCE_DECAMETERS &&
-    Number.isInteger(payload.bestPaceSecondsPerKm) &&
-    payload.bestPaceSecondsPerKm >= 0 &&
-    payload.bestPaceSecondsPerKm <= MAX_PACE_SECONDS &&
-    Number.isFinite(payload.achievedAt) &&
-    achievedDay >= 0 &&
-    achievedDay <= MAX_ACHIEVEMENT_DAY_OFFSET;
-
-  if (!validNumbers || nameBytes.length > MAX_NAME_BYTES) {
-    throw new Error("Data achievement berada di luar batas protokol.");
-  }
-
-  const { kind, target } = definition.requirement;
-  const satisfiesAchievement =
-    kind === "runs"
-      ? payload.completedRuns >= target
-      : kind === "distance"
-        ? payload.totalDistanceMeters >= target
-        : payload.bestPaceSecondsPerKm > 0 && payload.bestPaceSecondsPerKm <= target;
-
-  if (!satisfiesAchievement) {
-    throw new Error("Statistik pada tautan tidak memenuhi achievement.");
-  }
-};
-
-export const encodeAchievementShare = (payload: AchievementSharePayload): string => {
-  const normalizedPayload = {
-    ...payload,
-    runnerName: normalizeRunnerName(payload.runnerName),
-    completedRuns: Math.round(payload.completedRuns),
-    totalDistanceMeters: Math.round(payload.totalDistanceMeters),
-    bestPaceSecondsPerKm: Math.round(payload.bestPaceSecondsPerKm),
-  };
-  validatePayload(normalizedPayload);
-
-  const achievementIndex = getAchievementIndex(normalizedPayload.achievementId);
-  const achievedDay = Math.floor(normalizedPayload.achievedAt / DAY_MILLISECONDS) - PROTOCOL_EPOCH_DAY;
-  if (achievedDay < 0 || achievedDay > MAX_ACHIEVEMENT_DAY_OFFSET) {
-    throw new Error("Tanggal achievement tidak didukung protokol.");
-  }
-
-  const nameBytes = new TextEncoder().encode(normalizedPayload.runnerName);
-  const data: number[] = [(SHARE_PROTOCOL_VERSION << 4) | achievementIndex];
-  writeVarUint(data, normalizedPayload.completedRuns);
-  // Ten-meter precision is sufficient for a public badge and saves URL bytes.
-  writeVarUint(data, Math.round(normalizedPayload.totalDistanceMeters / 10));
-  writeVarUint(data, normalizedPayload.bestPaceSecondsPerKm);
-  writeVarUint(data, achievedDay);
-  writeVarUint(data, nameBytes.length);
-  data.push(...nameBytes);
-
-  const checksum = calculateCrc16(data);
-  data.push((checksum >> 8) & 0xff, checksum & 0xff);
-  return encodeBase64Url(Uint8Array.from(data));
-};
-
-export const decodeAchievementShare = (token: string): DecodedAchievementShare => {
-  const bytes = decodeBase64Url(token);
-  if (bytes.length < 8) {
-    throw new Error("Payload achievement terlalu pendek.");
-  }
-
-  const dataEnd = bytes.length - 2;
-  const expectedChecksum = (bytes[dataEnd] << 8) | bytes[dataEnd + 1];
-  const actualChecksum = calculateCrc16(bytes, dataEnd);
-  if (expectedChecksum !== actualChecksum) {
-    throw new Error("Checksum achievement tidak cocok.");
-  }
-
-  const header = bytes[0];
-  const protocolVersion = header >> 4;
-  const achievementIndex = header & 0x0f;
-  if (protocolVersion !== SHARE_PROTOCOL_VERSION) {
-    throw new Error("Versi tautan achievement belum didukung.");
-  }
-
-  const achievement = ACHIEVEMENT_DEFINITIONS[achievementIndex];
-  if (!achievement) {
-    throw new Error("Achievement pada tautan tidak dikenal.");
-  }
-
-  const cursor = { value: 1 };
-  const completedRuns = readVarUint(bytes, cursor, dataEnd);
-  const totalDistanceMeters = readVarUint(bytes, cursor, dataEnd) * 10;
-  const bestPaceSecondsPerKm = readVarUint(bytes, cursor, dataEnd);
-  const achievedDay = readVarUint(bytes, cursor, dataEnd);
-  const nameLength = readVarUint(bytes, cursor, dataEnd);
-
-  if (nameLength > MAX_NAME_BYTES || cursor.value + nameLength !== dataEnd) {
-    throw new Error("Panjang nama pada payload achievement tidak valid.");
-  }
-
-  let runnerName = "";
-  try {
-    runnerName = new TextDecoder("utf-8", { fatal: true }).decode(
-      bytes.slice(cursor.value, cursor.value + nameLength)
-    );
-  } catch {
-    throw new Error("Nama pelari pada payload achievement tidak valid.");
-  }
-
-  const payload: AchievementSharePayload = {
-    achievementId: achievement.id,
-    runnerName: normalizeRunnerName(runnerName),
-    completedRuns,
-    totalDistanceMeters,
-    bestPaceSecondsPerKm,
-    achievedAt: (achievedDay + PROTOCOL_EPOCH_DAY) * DAY_MILLISECONDS,
-  };
-  validatePayload(payload);
-
-  return {
-    ...payload,
-    achievement,
-    protocolVersion,
-  };
-};
-
-export const decodeAchievementHash = (hash: string): DecodedAchievementShare | null => {
-  if (!hash.startsWith(SHARE_HASH_PREFIX)) {
-    return null;
-  }
-  return decodeAchievementShare(hash.slice(SHARE_HASH_PREFIX.length));
 };
 
 const getAchievementMask = (achievementIds: AchievementId[]): number => {
@@ -765,36 +595,11 @@ export const buildAchievementCollectionShareText = (
   payload: AchievementCollectionSharePayload,
   trackName: string
 ): string => {
-  const owner = normalizeRunnerName(payload.runnerName) || "Seorang pelari";
-  return `${owner} telah menyelesaikan ${payload.completedRuns} run di ${trackName}, ` +
-    `total ${formatDistance(payload.totalDistanceMeters)} dalam ` +
-    `${formatDuration(payload.totalDurationSeconds)}, pace rata-rata ` +
-    `${formatPace(payload.averagePaceSecondsPerKm / 60)}, dan membuka ` +
+  const owner = normalizeRunnerName(payload.runnerName) || "Pelari Singapadu";
+  return `Lihat profil lari ${owner} di ${trackName}: ${payload.completedRuns} run, ` +
+    `${formatDistance(payload.totalDistanceMeters)}, ${formatDuration(payload.totalDurationSeconds)}, ` +
+    `pace rata-rata ${formatPace(payload.averagePaceSecondsPerKm / 60)}, dan ` +
     `${payload.unlockedAchievementIds.length} achievement.`;
-};
-
-export const buildAchievementShareUrl = (
-  baseUrl: string,
-  payload: AchievementSharePayload
-): string => {
-  const url = new URL(baseUrl);
-  url.search = "";
-  url.hash = `a=${encodeAchievementShare(payload)}`;
-  return url.toString();
-};
-
-export const buildAchievementShareText = (
-  payload: AchievementSharePayload,
-  trackName: string
-): string => {
-  const definition = ACHIEVEMENT_DEFINITIONS[getAchievementIndex(payload.achievementId)];
-  const owner = normalizeRunnerName(payload.runnerName) || "Seorang pelari";
-  const paceLabel =
-    payload.bestPaceSecondsPerKm > 0
-      ? `, pace terbaik ${formatPace(payload.bestPaceSecondsPerKm / 60)}`
-      : "";
-  return `${owner} meraih achievement ${definition.title} di ${trackName}: ` +
-    `${payload.completedRuns} run, total ${formatDistance(payload.totalDistanceMeters)}${paceLabel}.`;
 };
 
 const copyTextFallback = (value: string): boolean => {
@@ -817,49 +622,6 @@ const copyTextFallback = (value: string): boolean => {
   }
 };
 
-export const shareAchievementLink = async ({
-  payload,
-  baseUrl,
-  trackName,
-}: {
-  payload: AchievementSharePayload;
-  baseUrl: string;
-  trackName: string;
-}): Promise<AchievementShareResult> => {
-  const url = buildAchievementShareUrl(baseUrl, payload);
-  const definition = ACHIEVEMENT_DEFINITIONS[getAchievementIndex(payload.achievementId)];
-  const data: ShareData = {
-    title: `Achievement ${definition.title}`,
-    text: buildAchievementShareText(payload, trackName),
-    url,
-  };
-
-  if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
-    try {
-      await navigator.share(data);
-      return { outcome: "shared", url };
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
-        return { outcome: "cancelled", url };
-      }
-    }
-  }
-
-  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(url);
-      return { outcome: "copied", url };
-    } catch {
-      // Continue to the DOM copy fallback for older/restricted browsers.
-    }
-  }
-
-  return {
-    outcome: copyTextFallback(url) ? "copied" : "unavailable",
-    url,
-  };
-};
-
 export const shareAchievementCollectionLink = async ({
   payload,
   baseUrl,
@@ -868,10 +630,10 @@ export const shareAchievementCollectionLink = async ({
   payload: AchievementCollectionSharePayload;
   baseUrl: string;
   trackName: string;
-}): Promise<AchievementShareResult> => {
+}): Promise<ProfileShareResult> => {
   const url = buildAchievementCollectionShareUrl(baseUrl, payload);
   const data: ShareData = {
-    title: `Run Achievement Summary · ${trackName}`,
+    title: `Profil Lari · ${trackName}`,
     text: buildAchievementCollectionShareText(payload, trackName),
     url,
   };

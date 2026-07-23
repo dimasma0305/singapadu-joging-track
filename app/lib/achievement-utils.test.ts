@@ -2,15 +2,10 @@ import { describe, expect, test } from "bun:test";
 import {
   buildAchievementProgress,
   buildAchievementCollectionShareUrl,
-  buildAchievementShareUrl,
   createAchievementCollectionSharePayload,
-  createAchievementSharePayload,
   decodeAchievementCollectionHash,
   decodeAchievementCollectionShare,
-  decodeAchievementHash,
-  decodeAchievementShare,
   encodeAchievementCollectionShare,
-  encodeAchievementShare,
   normalizeRunnerName,
   summarizeAchievements,
 } from "./achievement-utils";
@@ -74,59 +69,16 @@ describe("achievement progress", () => {
   });
 });
 
-describe("compact achievement share protocol", () => {
+describe("compact runner-profile share protocol", () => {
   const sessions = Array.from({ length: 10 }, (_, index) =>
     createFinishedSession(index, {
       averagePacePerKm: index === 8 ? 5.75 : 9.375,
     })
   );
   const summary = summarizeAchievements(sessions);
-  const gold = buildAchievementProgress(sessions)
-    .find((entry) => entry.definition.id === "gold-runner");
 
   test("normalizes display names without losing Indonesian characters", () => {
     expect(normalizeRunnerName("  Ni   Luh Éka  ")).toBe("Ni Luh Éka");
-  });
-
-  test("round-trips a binary Base64URL payload with checksum", () => {
-    expect(gold).toBeDefined();
-    const payload = createAchievementSharePayload(gold!, summary, "Ni Luh Éka");
-    const token = encodeAchievementShare(payload);
-    const decoded = decodeAchievementShare(token);
-
-    expect(token).toMatch(/^[A-Za-z0-9_-]+$/);
-    expect(token.length).toBeLessThan(64);
-    expect(decoded.achievement.id).toBe("gold-runner");
-    expect(decoded.runnerName).toBe("Ni Luh Éka");
-    expect(decoded.completedRuns).toBe(10);
-    expect(decoded.totalDistanceMeters).toBe(32_000);
-    expect(decoded.bestPaceSecondsPerKm).toBe(345);
-    expect(decoded.achievedAt).toBe(Date.UTC(2026, 6, 10));
-  });
-
-  test("builds a short self-contained hash URL", () => {
-    const payload = createAchievementSharePayload(gold!, summary, "Made");
-    const url = buildAchievementShareUrl(
-      "https://example.com/joging?track=main",
-      payload
-    );
-    const parsed = new URL(url);
-
-    expect(parsed.search).toBe("");
-    expect(parsed.hash.startsWith("#a=")).toBe(true);
-    expect(url.length).toBeLessThan(100);
-    expect(decodeAchievementHash(parsed.hash)?.achievementId).toBe("gold-runner");
-    expect(decodeAchievementHash("#section")).toBeNull();
-  });
-
-  test("rejects a token changed after creation", () => {
-    const payload = createAchievementSharePayload(gold!, summary, "Made");
-    const token = encodeAchievementShare(payload);
-    const replacement = token.endsWith("A") ? "B" : "A";
-
-    expect(() => decodeAchievementShare(`${token.slice(0, -1)}${replacement}`)).toThrow(
-      "Checksum achievement tidak cocok"
-    );
   });
 
   test("round-trips the full trophy case and aggregate run statistics", () => {
@@ -161,5 +113,21 @@ describe("compact achievement share protocol", () => {
     ]);
     expect(decodeAchievementCollectionHash(new URL(url).hash)?.runnerName).toBe("Made Dimas");
     expect(decodeAchievementCollectionHash("#section")).toBeNull();
+  });
+
+  test("rejects a modified full-profile token", () => {
+    const payload = createAchievementCollectionSharePayload(
+      buildAchievementProgress(sessions),
+      summary,
+      ""
+    );
+    const token = encodeAchievementCollectionShare(payload);
+    const replacement = token.endsWith("A") ? "B" : "A";
+
+    expect(() =>
+      decodeAchievementCollectionShare(
+        `${token.slice(0, -1)}${replacement}`
+      )
+    ).toThrow("Checksum ringkasan achievement tidak cocok");
   });
 });

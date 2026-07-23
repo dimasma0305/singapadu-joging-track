@@ -8,7 +8,7 @@ import type L from "leaflet";
 import {
   Play,
   Pause,
-  Square,
+  Flag,
   Locate,
   Map,
   Activity,
@@ -31,7 +31,6 @@ import {
   Moon,
   Loader2,
   Award,
-  Share2,
   Medal,
   Footprints,
   Crown,
@@ -44,6 +43,7 @@ import {
   RotateCcw,
   Database,
   Link2,
+  ImageDown,
 } from "lucide-react";
 import type {
   RunSession,
@@ -79,21 +79,19 @@ import {
 import {
   buildAchievementProgress,
   buildAchievementCollectionShareUrl,
-  createAchievementSharePayload,
   createAchievementCollectionSharePayload,
   decodeAchievementCollectionHash,
-  decodeAchievementHash,
   normalizeRunnerName,
   shareAchievementCollectionLink,
-  shareAchievementLink,
   summarizeAchievements,
   type AchievementDefinition,
   type AchievementIconName,
   type AchievementProgress,
   type AchievementTier,
   type DecodedAchievementCollectionShare,
-  type DecodedAchievementShare,
 } from "./lib/achievement-utils";
+import { shareRunnerProfilePng } from "./lib/runner-profile-image";
+import { resolvePrimarySessionControl } from "./lib/session-control-utils";
 
 type GeolocationPermissionState = PermissionState | "unknown" | "unsupported";
 type GpsHealthState = "unknown" | "checking" | "ready" | "permission-denied" | "timeout" | "provider-off" | "error";
@@ -136,7 +134,7 @@ const FUNCTIONAL_TEST_CASES: ReadonlyArray<Pick<FunctionalTestResult, "id" | "la
   { id: "track-config", label: "Data rute & checkpoint" },
   { id: "map-render", label: "Render peta Leaflet" },
   { id: "local-storage", label: "Penyimpanan lokal" },
-  { id: "share-protocol", label: "Protokol URL achievement" },
+  { id: "share-protocol", label: "Protokol URL profil" },
   { id: "session-start", label: "Mulai sesi simulasi" },
   { id: "progress-metrics", label: "Progress, jarak & pace" },
   { id: "pause-resume", label: "Pause & resume" },
@@ -158,8 +156,6 @@ const TrackMapDynamic = dynamic(() => import("./components/TrackMap"), {
 
 const TRACK_KEY = "joging-track:session-history";
 const WARNING_LOG_KEY = "joging-track:warning-history";
-const ACHIEVEMENT_NAME_KEY = "joging-track:achievement-name";
-const LEGACY_CERTIFICATE_NAME_KEY = "joging-track:certificate-name";
 const SESSION_HISTORY_LIMIT = 25;
 const PUBLIC_BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 const TRACK_FILE = `${PUBLIC_BASE_PATH}/track.json`;
@@ -208,7 +204,20 @@ const AchievementIcon = ({
   }
 };
 
-const RunAchievementSummaryCard = ({
+const getRunnerInitials = (runnerName: string): string => {
+  const normalizedName = normalizeRunnerName(runnerName);
+  if (!normalizedName) {
+    return "PS";
+  }
+  return normalizedName
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => Array.from(word)[0]?.toUpperCase() ?? "")
+    .join("");
+};
+
+const RunnerProfileCard = ({
   runnerName,
   trackName,
   achievements,
@@ -231,21 +240,21 @@ const RunAchievementSummaryCard = ({
   longestRunMeters: number;
   latestRunAt: number | null;
 }) => (
-  <article className="run-achievement-summary" aria-label="Run achievement summary">
+  <article className="run-achievement-summary" aria-label="Profil lengkap runner">
     <header className="run-summary-header">
       <span className="run-summary-sport-icon">
-        <Activity size={22} aria-hidden="true" />
+        {getRunnerInitials(runnerName)}
       </span>
       <div>
-        <span className="run-summary-kicker">Run Achievement Summary</span>
+        <span className="run-summary-kicker">Singapadu Runner Profile</span>
         <strong>{runnerName || "Pelari Singapadu"}</strong>
-        <small>{trackName}</small>
+        <small>{trackName} · Statistik all-time</small>
       </div>
     </header>
 
     <div className="run-summary-distance">
       <strong>{(totalDistanceMeters / 1000).toFixed(2)}</strong>
-      <span>Kilometer total</span>
+      <span>Kilometer all-time</span>
     </div>
 
     <div className="run-summary-stats">
@@ -565,11 +574,9 @@ export default function HomePage() {
   // User Settings State
   const [useSoundAndHaptic, setUseSoundAndHaptic] = useState(true);
   const [mapTheme, setMapTheme] = useState<"dark" | "light">("light");
-  const [runnerName, setRunnerName] = useState("");
   const [achievementStatus, setAchievementStatus] = useState("");
-  const [sharingAchievementId, setSharingAchievementId] = useState<string | null>(null);
-  const [isSharingAchievementCollection, setIsSharingAchievementCollection] = useState(false);
-  const [sharedAchievement, setSharedAchievement] = useState<DecodedAchievementShare | null>(null);
+  const [isSharingRunnerProfile, setIsSharingRunnerProfile] = useState(false);
+  const [isSharingProfileImage, setIsSharingProfileImage] = useState(false);
   const [sharedAchievementCollection, setSharedAchievementCollection] =
     useState<DecodedAchievementCollectionShare | null>(null);
   const [insecureContext, setInsecureContext] = useState(false);
@@ -712,6 +719,48 @@ export default function HomePage() {
       : 0;
     return Math.max(0, trackDistance - routeProgressMeters);
   }, [session.routeProgressMeters, session.status, trackDistance, track]);
+
+  const isFinishReady = useMemo(() => {
+    if (
+      !track ||
+      (session.status !== "running" && session.status !== "paused") ||
+      track.waypoints.length === 0 ||
+      trackDistance <= 0
+    ) {
+      return false;
+    }
+
+    const finalWaypointIndex = track.waypoints.length - 1;
+    const currentPosition =
+      lastPosition ?? session.samples[session.samples.length - 1] ?? null;
+    if (!currentPosition) {
+      return false;
+    }
+
+    const routeProgressMeters = Number.isFinite(session.routeProgressMeters)
+      ? session.routeProgressMeters
+      : cumulativeDistances[
+          Math.min(session.closestIndex, cumulativeDistances.length - 1)
+        ] ?? 0;
+    const completionPercent = (routeProgressMeters / trackDistance) * 100;
+    const distanceToFinish = haversineMeters(currentPosition, track.endAt);
+
+    return (
+      session.closestIndex >= finalWaypointIndex &&
+      completionPercent >= 99 &&
+      distanceToFinish <=
+        (track.endFinishRadiusMeters ?? DEFAULT_FINISH_RADIUS_METERS)
+    );
+  }, [
+    cumulativeDistances,
+    lastPosition,
+    session.closestIndex,
+    session.routeProgressMeters,
+    session.samples,
+    session.status,
+    track,
+    trackDistance,
+  ]);
 
   const nextWaypointDistance = useMemo(() => {
     if (
@@ -889,14 +938,8 @@ export default function HomePage() {
       if (themeVal === "dark" || themeVal === "light") {
         setMapTheme(themeVal as "dark" | "light");
       }
-      const savedRunnerName =
-        localStorage.getItem(ACHIEVEMENT_NAME_KEY) ??
-        localStorage.getItem(LEGACY_CERTIFICATE_NAME_KEY);
-      if (savedRunnerName) {
-        const normalizedName = normalizeRunnerName(savedRunnerName);
-        setRunnerName(normalizedName);
-        localStorage.setItem(ACHIEVEMENT_NAME_KEY, normalizedName);
-      }
+      localStorage.removeItem("joging-track:achievement-name");
+      localStorage.removeItem("joging-track:certificate-name");
 
       setSessionHistory(
         parseSessionHistory(localStorage.getItem(TRACK_KEY), SESSION_HISTORY_LIMIT)
@@ -909,9 +952,7 @@ export default function HomePage() {
       try {
         const hash = window.location.hash;
         setSharedAchievementCollection(decodeAchievementCollectionHash(hash));
-        setSharedAchievement(decodeAchievementHash(hash));
       } catch (error) {
-        setSharedAchievement(null);
         setSharedAchievementCollection(null);
         const message = error instanceof Error
           ? error.message
@@ -1087,94 +1128,19 @@ export default function HomePage() {
     sessionRef.current = next;
   };
 
-  const updateRunnerName = (value: string) => {
-    setRunnerName(Array.from(value).slice(0, 40).join(""));
-  };
-
-  const persistRunnerName = () => {
-    const normalizedName = normalizeRunnerName(runnerName);
-    setRunnerName(normalizedName);
-    if (normalizedName) {
-      localStorage.setItem(ACHIEVEMENT_NAME_KEY, normalizedName);
-    } else {
-      localStorage.removeItem(ACHIEVEMENT_NAME_KEY);
-    }
-  };
-
-  const onShareAchievement = async (progressEntry: AchievementProgress) => {
-    if (!track || !progressEntry.unlocked) {
-      return;
-    }
-
-    const normalizedName = normalizeRunnerName(runnerName);
-    setRunnerName(normalizedName);
-    if (normalizedName) {
-      localStorage.setItem(ACHIEVEMENT_NAME_KEY, normalizedName);
-    }
-
-    setAchievementStatus("Sedang menyiapkan tautan achievement...");
-    setSharingAchievementId(progressEntry.definition.id);
-
-    try {
-      const payload = createAchievementSharePayload(
-        progressEntry,
-        achievementSummary,
-        normalizedName
-      );
-      const result = await shareAchievementLink({
-        payload,
-        baseUrl: window.location.href,
-        trackName: track.name,
-      });
-      const messages = {
-        shared: "Tautan achievement berhasil dibagikan.",
-        copied: "Tautan achievement disalin ke clipboard.",
-        cancelled: "Berbagi achievement dibatalkan.",
-        unavailable: "Browser tidak dapat menyalin otomatis. Salin tautan yang ditampilkan.",
-      } as const;
-      const message = messages[result.outcome];
-      setAchievementStatus(message);
-
-      if (result.outcome === "unavailable") {
-        window.prompt("Salin tautan achievement ini:", result.url);
-      }
-      if (result.outcome !== "cancelled") {
-        enqueueToast({
-          title: "Bagikan Achievement",
-          message,
-          severity: result.outcome === "unavailable" ? "warning" : "info",
-        });
-      }
-    } catch (error) {
-      const message = error instanceof Error
-        ? error.message
-        : "Achievement gagal dibagikan. Silakan coba lagi.";
-      setAchievementStatus(message);
-      enqueueToast({ title: "Gagal Membagikan", message, severity: "error" });
-    } finally {
-      setSharingAchievementId(null);
-    }
-  };
-
-  const onShareAchievementCollection = async () => {
+  const onShareRunnerProfile = async () => {
     if (!track || unlockedAchievements.length === 0) {
       return;
     }
 
-    const normalizedName = normalizeRunnerName(runnerName);
-    setRunnerName(normalizedName);
-    if (normalizedName) {
-      localStorage.setItem(ACHIEVEMENT_NAME_KEY, normalizedName);
-    }
-
-    setAchievementStatus("Sedang menyiapkan Run Achievement Summary...");
-    setIsSharingAchievementCollection(true);
+    setAchievementStatus("Sedang menyiapkan profil lari...");
+    setIsSharingRunnerProfile(true);
 
     try {
       const payload = createAchievementCollectionSharePayload(
         achievementProgress,
         achievementSummary,
-        normalizedName
+        ""
       );
       const result = await shareAchievementCollectionLink({
         payload,
@@ -1182,20 +1148,20 @@ export default function HomePage() {
         trackName: track.name,
       });
       const messages = {
-        shared: "Run Achievement Summary berhasil dibagikan.",
-        copied: "Tautan Run Achievement Summary disalin ke clipboard.",
-        cancelled: "Berbagi Run Achievement Summary dibatalkan.",
+        shared: "Profil lari lengkap berhasil dibagikan.",
+        copied: "Tautan profil lari disalin ke clipboard.",
+        cancelled: "Berbagi profil dibatalkan.",
         unavailable: "Browser tidak dapat menyalin otomatis. Salin tautan yang ditampilkan.",
       } as const;
       const message = messages[result.outcome];
       setAchievementStatus(message);
 
       if (result.outcome === "unavailable") {
-        window.prompt("Salin tautan Run Achievement Summary ini:", result.url);
+        window.prompt("Salin tautan profil lari ini:", result.url);
       }
       if (result.outcome !== "cancelled") {
         enqueueToast({
-          title: "Bagikan Run Summary",
+          title: "Bagikan Profil Lari",
           message,
           severity: result.outcome === "unavailable" ? "warning" : "info",
         });
@@ -1203,18 +1169,66 @@ export default function HomePage() {
     } catch (error) {
       const message = error instanceof Error
         ? error.message
-        : "Run Achievement Summary gagal dibagikan.";
+        : "Profil lari gagal dibagikan.";
       setAchievementStatus(message);
       enqueueToast({ title: "Gagal Membagikan", message, severity: "error" });
     } finally {
-      setIsSharingAchievementCollection(false);
+      setIsSharingRunnerProfile(false);
+    }
+  };
+
+  const onShareRunnerProfileImage = async () => {
+    if (!track || unlockedAchievements.length === 0) {
+      return;
+    }
+
+    setAchievementStatus("Sedang membuat PNG profil 1080 × 1350...");
+    setIsSharingProfileImage(true);
+
+    try {
+      const payload = createAchievementCollectionSharePayload(
+        achievementProgress,
+        achievementSummary,
+        ""
+      );
+      const profileUrl = buildAchievementCollectionShareUrl(
+        window.location.href,
+        payload
+      );
+      const result = await shareRunnerProfilePng({
+        payload,
+        trackName: track.name,
+        profileUrl,
+      });
+      const messages = {
+        shared: "PNG profil dikirim ke menu share perangkat.",
+        downloaded: `PNG profil diunduh sebagai ${result.fileName}.`,
+        cancelled: "Berbagi PNG dibatalkan.",
+        unavailable: "Browser tidak mendukung share atau download PNG.",
+      } as const;
+      const message = messages[result.outcome];
+      setAchievementStatus(message);
+      if (result.outcome !== "cancelled") {
+        enqueueToast({
+          title: "Bagikan PNG Profil",
+          message,
+          severity: result.outcome === "unavailable" ? "warning" : "info",
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "PNG profil gagal dibuat.";
+      setAchievementStatus(message);
+      enqueueToast({ title: "Gagal Membuat PNG", message, severity: "error" });
+    } finally {
+      setIsSharingProfileImage(false);
     }
   };
 
   const closeSharedAchievement = () => {
     const cleanUrl = `${window.location.pathname}${window.location.search}`;
     window.history.replaceState(null, "", cleanUrl);
-    setSharedAchievement(null);
     setSharedAchievementCollection(null);
   };
 
@@ -1993,7 +2007,7 @@ export default function HomePage() {
         (diagnosticDuration / diagnosticDistance) * 1000
       );
       const diagnosticUrl = buildAchievementCollectionShareUrl(window.location.href, {
-        runnerName: "Functional Test",
+        runnerName: "",
         unlockedAchievementIds: ["first-run"],
         completedRuns: 1,
         totalDistanceMeters: diagnosticDistance,
@@ -2011,8 +2025,8 @@ export default function HomePage() {
         "share-protocol",
         shareProtocolWorks ? "passed" : "failed",
         shareProtocolWorks
-          ? `Compact URL berhasil di-encode dan decode (${diagnosticUrl.length} karakter).`
-          : "Data compact URL berubah setelah decode."
+          ? `URL profil compact berhasil di-encode dan decode (${diagnosticUrl.length} karakter).`
+          : "Data profil berubah setelah decode."
       );
     } catch (error) {
       updateFunctionalTestResult(
@@ -2443,7 +2457,7 @@ export default function HomePage() {
               const finishPopup: WarningEvent = {
                 areaId: "finish-line",
                 areaName: "Garis Finish",
-                message: "Anda sudah berada di area finish. Tekan tombol 'Finish' untuk menyelesaikan dan menyimpan lari.",
+                message: "Anda sudah berada di area finish. Tombol utama kini berubah menjadi 'Finish'. Tekan untuk menyimpan lari.",
                 type: "info",
                 distanceMeters: distanceToEnd,
                 timestamp: Date.now(),
@@ -2567,6 +2581,32 @@ export default function HomePage() {
     });
   };
 
+  const primarySessionControl = resolvePrimarySessionControl({
+    status: session.status,
+    isFinishReady,
+    isTesting: isSimulating,
+  });
+
+  const onPrimarySessionAction = () => {
+    if (isSimulating) {
+      stopSimulation();
+      return;
+    }
+    if (isFinishReady) {
+      finishSession();
+      return;
+    }
+    if (sessionRef.current.status === "running") {
+      pauseSession();
+      return;
+    }
+    if (sessionRef.current.status === "paused") {
+      resumeSession();
+      return;
+    }
+    void startSession();
+  };
+
   const mapWarningAreas = track?.warningAreas ?? [];
   const pageReady = !loadingTrack && track;
   const activeToast = showPermissionSheet || startBlockInfo ? null : toastQueue[0] ?? null;
@@ -2580,17 +2620,19 @@ export default function HomePage() {
       {sharedAchievementCollection ? (
         <section
           className="shared-run-summary-overlay"
-          aria-label="Run Achievement Summary yang dibagikan"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Profil runner yang dibagikan"
         >
           <button
             type="button"
             className="shared-run-summary-close"
             onClick={closeSharedAchievement}
-            aria-label="Tutup Run Achievement Summary"
+            aria-label="Tutup profil runner"
           >
             <X size={18} aria-hidden="true" />
           </button>
-          <RunAchievementSummaryCard
+          <RunnerProfileCard
             runnerName={sharedAchievementCollection.runnerName}
             trackName={track?.name ?? "Singapadu Jogging Track"}
             achievements={sharedAchievementCollection.achievements}
@@ -2603,55 +2645,8 @@ export default function HomePage() {
             latestRunAt={sharedAchievementCollection.latestRunAt}
           />
           <p className="shared-run-summary-note">
-            Data dibawa langsung di URL compact v{sharedAchievementCollection.protocolVersion} tanpa backend.
-          </p>
-        </section>
-      ) : null}
-
-      {sharedAchievement ? (
-        <section
-          className={`shared-achievement-card tier-${sharedAchievement.achievement.tier}`}
-          aria-labelledby="shared-achievement-title"
-          aria-describedby="shared-achievement-description"
-        >
-          <button
-            type="button"
-            className="shared-achievement-close"
-            onClick={closeSharedAchievement}
-            aria-label="Tutup achievement yang dibagikan"
-          >
-            <X size={18} aria-hidden="true" />
-          </button>
-          <div className="shared-achievement-icon">
-            <AchievementIcon name={sharedAchievement.achievement.icon} size={34} />
-          </div>
-          <div className="shared-achievement-copy">
-            <span className="shared-achievement-kicker">
-              Achievement {ACHIEVEMENT_TIER_LABELS[sharedAchievement.achievement.tier]}
-            </span>
-            <h2 id="shared-achievement-title">{sharedAchievement.achievement.title}</h2>
-            <p id="shared-achievement-description">
-              {sharedAchievement.runnerName || "Pelari Singapadu"} telah meraih achievement ini.
-            </p>
-          </div>
-          <div className="shared-achievement-stats" aria-label="Statistik achievement">
-            <span><strong>{sharedAchievement.completedRuns}</strong> run</span>
-            <span><strong>{formatDistance(sharedAchievement.totalDistanceMeters)}</strong> total</span>
-            <span>
-              <strong>
-                {sharedAchievement.bestPaceSecondsPerKm > 0
-                  ? formatPace(sharedAchievement.bestPaceSecondsPerKm / 60)
-                  : "--"}
-              </strong>
-              pace terbaik
-            </span>
-          </div>
-          <p className="shared-achievement-meta">
-            Diraih {new Intl.DateTimeFormat("id-ID", {
-              dateStyle: "long",
-              timeZone: "UTC",
-            }).format(new Date(sharedAchievement.achievedAt))}
-            {" · "}URL compact v{sharedAchievement.protocolVersion}
+            Profil ini membawa seluruh achievement terbuka dan statistik all-time melalui URL compact
+            v{sharedAchievementCollection.protocolVersion}, tanpa backend.
           </p>
         </section>
       ) : null}
@@ -2853,38 +2848,24 @@ export default function HomePage() {
 
           {/* Quick Primary Actions at the top of bottom sheet - always visible when expanded */}
           <div className="panel-primary-actions">
-            {session.status === "idle" || session.status === "finished" ? (
-              <button 
-                className="btn-primary-action start" 
-                onClick={isSimulating ? stopSimulation : startSession}
-                disabled={!track}
-              >
-                <Play size={20} fill="currentColor" />
-                <span>Mulai Sesi Lari</span>
-              </button>
-            ) : session.status === "paused" ? (
-              <button className="btn-primary-action start" onClick={resumeSession}>
-                <Play size={20} fill="currentColor" />
-                <span>Lanjutkan Sesi</span>
-              </button>
-            ) : (
-              <button className="btn-primary-action pause" onClick={pauseSession}>
+            <button
+              type="button"
+              className={`btn-primary-action ${primarySessionControl.mode}`}
+              onClick={onPrimarySessionAction}
+              disabled={!track}
+              aria-label={primarySessionControl.label}
+            >
+              {primarySessionControl.mode === "pause" ? (
                 <Pause size={20} fill="currentColor" />
-                <span>Jeda Sesi</span>
-              </button>
-            )}
-
-            {session.status === "running" || session.status === "paused" ? (
-              <button
-                className="btn-primary-action-finish"
-                onClick={isSimulating ? stopSimulation : finishSession}
-                title="Finish"
-                aria-label="Finish dan simpan sesi"
-              >
-                <Square size={18} fill="currentColor" />
-                <span>Finish</span>
-              </button>
-            ) : null}
+              ) : primarySessionControl.mode === "finish" ? (
+                <Flag size={20} fill="currentColor" />
+              ) : primarySessionControl.mode === "stop" ? (
+                <X size={20} aria-hidden="true" />
+              ) : (
+                <Play size={20} fill="currentColor" />
+              )}
+              <span>{primarySessionControl.label}</span>
+            </button>
 
             <button className="btn-primary-action-recenter" onClick={onRecenter} title="Pusatkan GPS" aria-label="Pusatkan GPS">
               <Locate size={18} />
@@ -3039,25 +3020,6 @@ export default function HomePage() {
                   )}
 
                   <div className="achievement-completion-actions">
-                    {latestUnlockedAchievement ? (
-                      <button
-                        type="button"
-                        className="btn-achievement-share"
-                        onClick={() => onShareAchievement(latestUnlockedAchievement)}
-                        disabled={sharingAchievementId === latestUnlockedAchievement.definition.id}
-                      >
-                        {sharingAchievementId === latestUnlockedAchievement.definition.id ? (
-                          <Loader2 size={18} className="animate-spin" aria-hidden="true" />
-                        ) : (
-                          <Share2 size={18} aria-hidden="true" />
-                        )}
-                        <span>
-                          {sharingAchievementId === latestUnlockedAchievement.definition.id
-                            ? "Menyiapkan..."
-                            : "Bagikan"}
-                        </span>
-                      </button>
-                    ) : null}
                     <button
                       type="button"
                       className="btn-achievement-view"
@@ -3067,7 +3029,7 @@ export default function HomePage() {
                       }}
                     >
                       <Trophy size={18} aria-hidden="true" />
-                      <span>Lihat Semua</span>
+                      <span>Lihat Profil Achievement</span>
                     </button>
                   </div>
                 </section>
@@ -3126,10 +3088,10 @@ export default function HomePage() {
               <section className="achievement-showcase" aria-labelledby="achievement-showcase-title">
                 <div className="achievement-showcase-heading">
                   <div>
-                    <span className="achievement-eyebrow">Koleksi lokal</span>
-                    <h2 id="achievement-showcase-title">Achievement</h2>
+                    <span className="achievement-eyebrow">Profil lokal</span>
+                    <h2 id="achievement-showcase-title">Profil Lari</h2>
                     <p>
-                      {unlockedAchievements.length} dari {achievementProgress.length} terbuka
+                      Trophy Case · {unlockedAchievements.length} dari {achievementProgress.length} terbuka
                     </p>
                   </div>
                   <Trophy size={28} aria-hidden="true" />
@@ -3146,26 +3108,9 @@ export default function HomePage() {
                   </div>
                 </div>
 
-                <div className="achievement-profile">
-                  <label htmlFor="achievement-runner-name">Nama pelari <span>(opsional)</span></label>
-                  <input
-                    id="achievement-runner-name"
-                    type="text"
-                    value={runnerName}
-                    maxLength={40}
-                    autoComplete="name"
-                    onChange={(event) => updateRunnerName(event.target.value)}
-                    onBlur={persistRunnerName}
-                    aria-describedby="achievement-runner-help"
-                  />
-                  <span id="achievement-runner-help" className="achievement-field-help">
-                    Nama ikut dimasukkan ke tautan share. Kosongkan untuk membagikan secara anonim.
-                  </span>
-                </div>
-
                 <div className="run-summary-share-block">
-                  <RunAchievementSummaryCard
-                    runnerName={runnerName}
+                  <RunnerProfileCard
+                    runnerName=""
                     trackName={track?.name ?? "Singapadu Jogging Track"}
                     achievements={unlockedAchievements.map((entry) => entry.definition)}
                     completedRuns={achievementSummary.completedRuns}
@@ -3176,28 +3121,49 @@ export default function HomePage() {
                     longestRunMeters={achievementSummary.longestRunMeters}
                     latestRunAt={achievementSummary.latestRunAt}
                   />
-                  <button
-                    type="button"
-                    className="btn-run-summary-share"
-                    onClick={onShareAchievementCollection}
-                    disabled={
-                      unlockedAchievements.length === 0 ||
-                      isSharingAchievementCollection
-                    }
-                  >
-                    {isSharingAchievementCollection ? (
-                      <Loader2 size={18} className="animate-spin" aria-hidden="true" />
-                    ) : (
-                      <Share2 size={18} aria-hidden="true" />
-                    )}
-                    <span>
-                      {isSharingAchievementCollection
-                        ? "Menyiapkan summary..."
-                        : "Bagikan Semua Achievement"}
-                    </span>
-                  </button>
+                  <div className="runner-profile-share-actions">
+                    <button
+                      type="button"
+                      className="btn-run-summary-share"
+                      onClick={onShareRunnerProfile}
+                      disabled={
+                        unlockedAchievements.length === 0 ||
+                        isSharingRunnerProfile ||
+                        isSharingProfileImage
+                      }
+                    >
+                      {isSharingRunnerProfile ? (
+                        <Loader2 size={18} className="animate-spin" aria-hidden="true" />
+                      ) : (
+                        <Link2 size={18} aria-hidden="true" />
+                      )}
+                      <span>
+                        {isSharingRunnerProfile ? "Menyiapkan..." : "Bagikan Profil"}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-run-summary-share image"
+                      onClick={onShareRunnerProfileImage}
+                      disabled={
+                        unlockedAchievements.length === 0 ||
+                        isSharingProfileImage ||
+                        isSharingRunnerProfile
+                      }
+                    >
+                      {isSharingProfileImage ? (
+                        <Loader2 size={18} className="animate-spin" aria-hidden="true" />
+                      ) : (
+                        <ImageDown size={18} aria-hidden="true" />
+                      )}
+                      <span>
+                        {isSharingProfileImage ? "Membuat PNG..." : "Bagikan PNG"}
+                      </span>
+                    </button>
+                  </div>
                   <p>
-                    Tautan memuat seluruh badge terbuka dan statistik agregat dalam payload Base64URL ringkas.
+                    Bagikan satu profil lengkap berisi seluruh badge dan statistik, atau PNG
+                    1080 × 1350 yang siap dikirim ke aplikasi sosial.
                   </p>
                 </div>
 
@@ -3207,7 +3173,6 @@ export default function HomePage() {
                     const unlockedDate = entry.unlockedAt
                       ? new Date(entry.unlockedAt).toLocaleDateString("id-ID")
                       : null;
-                    const isSharing = sharingAchievementId === definition.id;
 
                     return (
                       <article
@@ -3242,20 +3207,6 @@ export default function HomePage() {
                               <Medal size={14} aria-hidden="true" />
                               Terbuka {unlockedDate}
                             </span>
-                            <button
-                              type="button"
-                              className="btn-achievement-card-share"
-                              onClick={() => onShareAchievement(entry)}
-                              disabled={isSharing}
-                              aria-label={`Bagikan achievement ${definition.title}`}
-                            >
-                              {isSharing ? (
-                                <Loader2 size={16} className="animate-spin" aria-hidden="true" />
-                              ) : (
-                                <Share2 size={16} aria-hidden="true" />
-                              )}
-                              <span>{isSharing ? "Menyiapkan" : "Bagikan"}</span>
-                            </button>
                           </div>
                         ) : (
                           <span className="achievement-locked-label">
