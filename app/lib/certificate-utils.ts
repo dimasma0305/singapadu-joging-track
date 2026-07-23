@@ -18,6 +18,13 @@ export type CompletionCertificateDetails = {
   filename: string;
 };
 
+export type CertificateShareOutcome =
+  | "shared"
+  | "shared-without-file"
+  | "downloaded-and-copied"
+  | "downloaded"
+  | "cancelled";
+
 export const normalizeCertificateName = (value: string): string =>
   value.trim().replace(/\s+/g, " ").slice(0, 60);
 
@@ -65,6 +72,11 @@ export const buildCompletionCertificateDetails = ({
     filename: createCertificateFilename(normalizedName, session.endedAt),
   };
 };
+
+export const buildCertificateShareText = (details: CompletionCertificateDetails): string =>
+  `Saya telah menyelesaikan ${details.trackName} sejauh ${details.distanceLabel} ` +
+  `dalam ${details.durationLabel} dengan pace ${details.paceLabel}. ` +
+  `ID sertifikat: ${details.certificateId}.`;
 
 const drawRoundedRect = (
   context: CanvasRenderingContext2D,
@@ -242,9 +254,7 @@ const renderCertificate = (details: CompletionCertificateDetails): HTMLCanvasEle
   return canvas;
 };
 
-export const downloadCompletionCertificate = async (
-  input: CompletionCertificateInput
-): Promise<string> => {
+const createCertificateAsset = async (input: CompletionCertificateInput) => {
   if (typeof document === "undefined") {
     throw new Error("Sertifikat hanya dapat dibuat di browser.");
   }
@@ -256,14 +266,86 @@ export const downloadCompletionCertificate = async (
     throw new Error("Gagal membuat file sertifikat.");
   }
 
+  return { blob, details };
+};
+
+const triggerCertificateDownload = (blob: Blob, filename: string) => {
   const objectUrl = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = objectUrl;
-  link.download = details.filename;
+  link.download = filename;
   link.style.display = "none";
   document.body.appendChild(link);
   link.click();
   link.remove();
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+};
+
+export const downloadCompletionCertificate = async (
+  input: CompletionCertificateInput
+): Promise<string> => {
+  const { blob, details } = await createCertificateAsset(input);
+  triggerCertificateDownload(blob, details.filename);
   return details.filename;
+};
+
+export const shareCompletionCertificate = async (
+  input: CompletionCertificateInput
+): Promise<CertificateShareOutcome> => {
+  const { blob, details } = await createCertificateAsset(input);
+  const title = `Sertifikat ${details.trackName}`;
+  const text = buildCertificateShareText(details);
+  const pageUrl = window.location.href;
+  const canCreateFile = typeof File !== "undefined";
+  const file = canCreateFile
+    ? new File([blob], details.filename, { type: "image/png" })
+    : null;
+  const shareNavigator = navigator as unknown as {
+    share?: (data: ShareData) => Promise<void>;
+    canShare?: (data?: ShareData) => boolean;
+  };
+  const supportsNativeShare = typeof shareNavigator.share === "function";
+  const supportsFileShare = typeof shareNavigator.canShare === "function";
+  const canShareFile = Boolean(
+    file &&
+    supportsNativeShare &&
+    supportsFileShare &&
+    shareNavigator.canShare?.({ files: [file] })
+  );
+
+  if (file && canShareFile) {
+    try {
+      await shareNavigator.share?.({ title, text, files: [file] });
+      return "shared";
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return "cancelled";
+      }
+      // Fall through to a local download when the OS rejects file sharing.
+    }
+  }
+
+  triggerCertificateDownload(blob, details.filename);
+
+  if (supportsNativeShare && !canShareFile) {
+    try {
+      await shareNavigator.share?.({ title, text, url: pageUrl });
+      return "shared-without-file";
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return "cancelled";
+      }
+    }
+  }
+
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(`${text}\n${pageUrl}`);
+      return "downloaded-and-copied";
+    } catch {
+      // The PNG download is still available even when clipboard access fails.
+    }
+  }
+
+  return "downloaded";
 };

@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { buildCompletionCertificateDetails, normalizeCertificateName } from "./certificate-utils";
+import {
+  buildCertificateShareText,
+  buildCompletionCertificateDetails,
+  normalizeCertificateName,
+} from "./certificate-utils";
 import type { RunSession } from "./types";
 
 const finishedSession: RunSession = {
@@ -38,6 +42,9 @@ describe("completion certificate", () => {
     expect(details.paceLabel).toBe("9:23 /km");
     expect(details.certificateId).toBe("JT-1234ABCD5678");
     expect(details.filename).toBe("sertifikat-joging-made-dimas-2026-07-22.png");
+    expect(buildCertificateShareText(details)).toContain(
+      "Saya telah menyelesaikan Singapadu Jogging Loop sejauh 3.20 km"
+    );
   });
 
   test("rejects empty names and unfinished sessions", () => {

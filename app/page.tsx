@@ -33,6 +33,7 @@ import {
   Loader2,
   Award,
   Download,
+  Share2,
 } from "lucide-react";
 import type {
   RunSession,
@@ -68,6 +69,7 @@ import {
 import {
   downloadCompletionCertificate,
   normalizeCertificateName,
+  shareCompletionCertificate,
 } from "./lib/certificate-utils";
 
 type GeolocationPermissionState = PermissionState | "unknown" | "unsupported";
@@ -383,6 +385,7 @@ export default function HomePage() {
   const [certificateNameError, setCertificateNameError] = useState<string | null>(null);
   const [certificateStatus, setCertificateStatus] = useState("");
   const [downloadingCertificateId, setDownloadingCertificateId] = useState<string | null>(null);
+  const [sharingCertificateId, setSharingCertificateId] = useState<string | null>(null);
   const [insecureContext, setInsecureContext] = useState(false);
 
   // Simulation State
@@ -866,6 +869,55 @@ export default function HomePage() {
       enqueueToast({ title: "Sertifikat Gagal", message, severity: "error" });
     } finally {
       setDownloadingCertificateId(null);
+    }
+  };
+
+  const onShareCertificate = async (completedSession: RunSession) => {
+    if (!track || completedSession.status !== "finished") {
+      return;
+    }
+
+    const normalizedName = normalizeCertificateName(certificateName);
+    if (!normalizedName) {
+      const message = "Masukkan nama peserta sebelum membagikan sertifikat.";
+      setCertificateNameError(message);
+      setCertificateStatus(message);
+      enqueueToast({ title: "Nama Diperlukan", message, severity: "warning" });
+      return;
+    }
+
+    setCertificateName(normalizedName);
+    setCertificateNameError(null);
+    setCertificateStatus("Sedang menyiapkan sertifikat untuk dibagikan...");
+    setSharingCertificateId(completedSession.sessionId);
+    localStorage.setItem(CERTIFICATE_NAME_KEY, normalizedName);
+
+    try {
+      const outcome = await shareCompletionCertificate({
+        participantName: normalizedName,
+        trackName: track.name,
+        session: completedSession,
+      });
+      const messages = {
+        shared: "Sertifikat berhasil dibagikan.",
+        "shared-without-file": "Teks berhasil dibagikan dan file PNG sudah diunduh.",
+        "downloaded-and-copied": "File PNG diunduh dan teks berbagi disalin ke clipboard.",
+        downloaded: "File PNG diunduh. Pilih file tersebut saat membuka aplikasi media sosial.",
+        cancelled: "Berbagi sertifikat dibatalkan.",
+      } as const;
+      const message = messages[outcome];
+      setCertificateStatus(message);
+      if (outcome !== "cancelled") {
+        enqueueToast({ title: "Bagikan Sertifikat", message, severity: "info" });
+      }
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "Sertifikat gagal dibagikan. Silakan coba lagi.";
+      setCertificateStatus(message);
+      enqueueToast({ title: "Gagal Membagikan", message, severity: "error" });
+    } finally {
+      setSharingCertificateId(null);
     }
   };
 
@@ -2280,19 +2332,34 @@ export default function HomePage() {
                       {certificateNameError}
                     </span>
                   ) : null}
-                  <button
-                    type="button"
-                    className="btn-certificate-download"
-                    onClick={() => onDownloadCertificate(session)}
-                    disabled={downloadingCertificateId === session.sessionId}
-                  >
-                    {downloadingCertificateId === session.sessionId ? (
-                      <Loader2 size={18} className="animate-spin" aria-hidden="true" />
-                    ) : (
-                      <Download size={18} aria-hidden="true" />
-                    )}
-                    <span>{downloadingCertificateId === session.sessionId ? "Membuat Sertifikat..." : "Unduh Sertifikat PNG"}</span>
-                  </button>
+                  <div className="certificate-action-row">
+                    <button
+                      type="button"
+                      className="btn-certificate-download"
+                      onClick={() => onDownloadCertificate(session)}
+                      disabled={!track || downloadingCertificateId === session.sessionId || sharingCertificateId === session.sessionId}
+                    >
+                      {downloadingCertificateId === session.sessionId ? (
+                        <Loader2 size={18} className="animate-spin" aria-hidden="true" />
+                      ) : (
+                        <Download size={18} aria-hidden="true" />
+                      )}
+                      <span>{downloadingCertificateId === session.sessionId ? "Membuat..." : "Unduh PNG"}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-certificate-share"
+                      onClick={() => onShareCertificate(session)}
+                      disabled={!track || sharingCertificateId === session.sessionId || downloadingCertificateId === session.sessionId}
+                    >
+                      {sharingCertificateId === session.sessionId ? (
+                        <Loader2 size={18} className="animate-spin" aria-hidden="true" />
+                      ) : (
+                        <Share2 size={18} aria-hidden="true" />
+                      )}
+                      <span>{sharingCertificateId === session.sessionId ? "Menyiapkan..." : "Bagikan"}</span>
+                    </button>
+                  </div>
                 </section>
               ) : null}
 
@@ -2407,20 +2474,36 @@ export default function HomePage() {
                           </div>
                         </div>
                         {entry.status === "finished" ? (
-                          <button
-                            type="button"
-                            className="btn-history-certificate"
-                            onClick={() => onDownloadCertificate(entry)}
-                            disabled={downloadingCertificateId === entry.sessionId}
-                            aria-label={`Unduh sertifikat sesi ${endLabel}`}
-                          >
-                            {downloadingCertificateId === entry.sessionId ? (
-                              <Loader2 size={15} className="animate-spin" aria-hidden="true" />
-                            ) : (
-                              <Download size={15} aria-hidden="true" />
-                            )}
-                            <span>{downloadingCertificateId === entry.sessionId ? "Membuat..." : "Unduh Sertifikat"}</span>
-                          </button>
+                          <div className="history-certificate-actions">
+                            <button
+                              type="button"
+                              className="btn-history-certificate"
+                              onClick={() => onDownloadCertificate(entry)}
+                              disabled={!track || downloadingCertificateId === entry.sessionId || sharingCertificateId === entry.sessionId}
+                              aria-label={`Unduh sertifikat sesi ${endLabel}`}
+                            >
+                              {downloadingCertificateId === entry.sessionId ? (
+                                <Loader2 size={15} className="animate-spin" aria-hidden="true" />
+                              ) : (
+                                <Download size={15} aria-hidden="true" />
+                              )}
+                              <span>{downloadingCertificateId === entry.sessionId ? "Membuat..." : "Unduh"}</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-history-share"
+                              onClick={() => onShareCertificate(entry)}
+                              disabled={!track || sharingCertificateId === entry.sessionId || downloadingCertificateId === entry.sessionId}
+                              aria-label={`Bagikan sertifikat sesi ${endLabel}`}
+                            >
+                              {sharingCertificateId === entry.sessionId ? (
+                                <Loader2 size={15} className="animate-spin" aria-hidden="true" />
+                              ) : (
+                                <Share2 size={15} aria-hidden="true" />
+                              )}
+                              <span>{sharingCertificateId === entry.sessionId ? "Menyiapkan..." : "Bagikan"}</span>
+                            </button>
+                          </div>
                         ) : null}
                       </div>
                     );

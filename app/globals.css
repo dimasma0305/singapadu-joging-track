@@ -1349,7 +1349,9 @@ main.track-shell {
 }
 
 .btn-certificate-download,
-.btn-history-certificate {
+.btn-certificate-share,
+.btn-history-certificate,
+.btn-history-share {
   border: 1px solid #38bdf8;
   border-radius: 9px;
   background: #075985;
@@ -1368,17 +1370,23 @@ main.track-shell {
 }
 
 .btn-certificate-download:hover,
-.btn-history-certificate:hover {
+.btn-certificate-share:hover,
+.btn-history-certificate:hover,
+.btn-history-share:hover {
   background: #0c4a6e;
 }
 
 .btn-certificate-download:active,
-.btn-history-certificate:active {
+.btn-certificate-share:active,
+.btn-history-certificate:active,
+.btn-history-share:active {
   transform: translateY(1px);
 }
 
 .btn-certificate-download:disabled,
-.btn-history-certificate:disabled {
+.btn-certificate-share:disabled,
+.btn-history-certificate:disabled,
+.btn-history-share:disabled {
   cursor: wait;
   opacity: 0.72;
 }
@@ -1387,10 +1395,29 @@ main.track-shell {
   margin-bottom: 12px;
 }
 
-.btn-history-certificate {
+.certificate-action-row,
+.history-certificate-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.btn-history-certificate,
+.btn-history-share {
   width: 100%;
-  min-height: 40px;
+  min-height: 44px;
   margin-top: 2px;
+}
+
+.btn-certificate-share,
+.btn-history-share {
+  border-color: #facc15;
+  background: #854d0e;
+}
+
+.btn-certificate-share:hover,
+.btn-history-share:hover {
+  background: #713f12;
 }
 
 /* Settings elements */
