@@ -51,9 +51,8 @@ kuantisasi angka, checksum CRC-16, dan Base64URL tanpa padding. Fragmen tidak
 dikirim ke server dan dapat dibaca sepenuhnya di browser penerima. Tombol
 **Bagikan PNG** membuat artwork portrait 1080 × 1350; di perangkat yang mendukung
 Web Share file akan diteruskan ke aplikasi sosial, sedangkan browser lain
-mengunduh berkas PNG. Tampilan URL dan PNG memakai komposisi activity-share
-map-first: route trace oranye, distance, moving time, average pace, statistik
-all-time tambahan, lalu seluruh achievement dalam satu Trophy Case.
+mengunduh berkas PNG. Tampilan URL dan PNG memuat garis rute dari data lintasan,
+ringkasan jarak, waktu, pace, dan seluruh achievement.
 
 ## Uji fungsional otomatis
 

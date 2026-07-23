@@ -634,9 +634,7 @@ main.track-shell {
   width: 100%;
   height: 100dvh;
   overflow-y: auto;
-  background:
-    radial-gradient(circle at 50% -10%, rgba(252, 82, 0, 0.16), transparent 36%),
-    #f3f3f0;
+  background: #f3f3f0;
   padding:
     calc(58px + env(safe-area-inset-top, 0px))
     10px
@@ -669,8 +667,8 @@ main.track-shell {
   width: 40px;
   height: 40px;
   border: 1px solid #d6d6d1;
-  border-radius: 11px;
-  background: rgba(255, 255, 255, 0.94);
+  border-radius: 4px;
+  background: #fff;
   color: #242428;
   display: flex;
   align-items: center;
@@ -1446,9 +1444,8 @@ main.track-shell {
   position: relative;
   overflow: hidden;
   border: 1px solid #deded9;
-  border-radius: 18px;
+  border-radius: 5px;
   background: #fff;
-  box-shadow: 0 16px 38px rgba(36, 36, 40, 0.16);
   color: #242428;
 }
 
@@ -1469,18 +1466,13 @@ main.track-shell {
 }
 
 .run-summary-sport-icon {
-  width: 44px;
-  height: 44px;
+  width: 26px;
+  height: 26px;
   flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--run-summary-orange);
-  color: #fff;
+  color: var(--run-summary-orange);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.9rem;
-  font-weight: 900;
-  letter-spacing: -0.02em;
 }
 
 .run-summary-header > div {
@@ -1493,8 +1485,7 @@ main.track-shell {
   color: var(--run-summary-orange);
   font-size: 0.58rem;
   font-weight: 800;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
+  letter-spacing: 0.01em;
 }
 
 .run-summary-header strong {
@@ -1513,27 +1504,6 @@ main.track-shell {
   white-space: nowrap;
 }
 
-.run-summary-activity-pill {
-  margin-left: auto;
-  flex: 0 0 auto;
-  border: 1px solid #deded9;
-  border-radius: 999px;
-  background: #fafaf8;
-  color: #242428;
-  padding: 5px 8px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 0.58rem;
-  font-weight: 800;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.run-summary-activity-pill svg {
-  color: var(--run-summary-orange);
-}
-
 .run-summary-route {
   position: relative;
   overflow: hidden;
@@ -1549,28 +1519,7 @@ main.track-shell {
 }
 
 .run-summary-map-background {
-  fill: #e9ece7;
-}
-
-.run-summary-map-grid {
-  fill: none;
-  stroke: #d5d9d3;
-  stroke-width: 1.5;
-}
-
-.run-summary-map-road {
-  fill: none;
-  stroke: rgba(255, 255, 255, 0.9);
-  stroke-width: 13;
-  stroke-linecap: round;
-}
-
-.run-summary-map-road.broad {
-  stroke-width: 17;
-}
-
-.run-summary-map-road.minor {
-  stroke-width: 9;
+  fill: #f0f0ed;
 }
 
 .run-summary-route-halo,
@@ -1589,7 +1538,6 @@ main.track-shell {
 .run-summary-route-line {
   stroke: var(--run-summary-orange);
   stroke-width: 9;
-  filter: drop-shadow(0 4px 4px rgba(143, 47, 0, 0.25));
 }
 
 .run-summary-route-marker-halo {
@@ -1616,37 +1564,27 @@ main.track-shell {
   bottom: 9px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 8px;
   pointer-events: none;
 }
 
-.run-summary-route-caption span,
-.run-summary-route-caption strong {
+.run-summary-route-caption span {
   min-width: 0;
-  border: 1px solid rgba(218, 218, 213, 0.9);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.93);
-  color: #343438;
-  padding: 5px 8px;
+  color: #505055;
+  padding: 3px 0;
   display: inline-flex;
   align-items: center;
   gap: 4px;
   font-size: 0.55rem;
   font-style: normal;
-  font-weight: 800;
-  text-transform: uppercase;
+  font-weight: 700;
 }
 
 .run-summary-route-caption span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.run-summary-route-caption strong {
-  flex: 0 0 auto;
-  color: var(--run-summary-orange);
 }
 
 .run-summary-primary-stats {
@@ -1693,8 +1631,6 @@ main.track-shell {
   font-size: 0.55rem;
   font-style: normal;
   font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .run-summary-secondary-stats {
@@ -1725,7 +1661,6 @@ main.track-shell {
   color: #77777c;
   font-size: 0.53rem;
   font-weight: 700;
-  text-transform: uppercase;
 }
 
 .run-summary-trophies {
@@ -1744,7 +1679,6 @@ main.track-shell {
   color: #242428;
   font-size: 0.72rem;
   font-weight: 800;
-  text-transform: uppercase;
 }
 
 .run-summary-trophies-heading strong {
@@ -1755,17 +1689,18 @@ main.track-shell {
 .run-summary-badge-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 7px;
+  column-gap: 12px;
 }
 
 .run-summary-badge {
   min-width: 0;
-  min-height: 52px;
-  border: 1px solid #e1e1dd;
-  border-radius: 11px;
-  background: #fafaf8;
+  min-height: 50px;
+  border: 0;
+  border-bottom: 1px solid #e1e1dd;
+  border-radius: 0;
+  background: transparent;
   color: var(--achievement-accent, #fff);
-  padding: 7px 8px;
+  padding: 7px 0;
   display: flex;
   flex-direction: row;
   align-items: center;

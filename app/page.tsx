@@ -211,19 +211,6 @@ const AchievementIcon = ({
   }
 };
 
-const getRunnerInitials = (runnerName: string): string => {
-  const normalizedName = normalizeRunnerName(runnerName);
-  if (!normalizedName) {
-    return "PS";
-  }
-  return normalizedName
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((word) => Array.from(word)[0]?.toUpperCase() ?? "")
-    .join("");
-};
-
 const RunnerProfileCard = ({
   runnerName,
   trackName,
@@ -278,17 +265,13 @@ const RunnerProfileCard = ({
     <article className="run-achievement-summary" aria-label="Profil lengkap runner">
       <header className="run-summary-header">
         <span className="run-summary-sport-icon">
-          {getRunnerInitials(runnerName)}
+          <Activity size={20} aria-hidden="true" />
         </span>
         <div>
           <span className="run-summary-kicker">Singapadu Jogging</span>
           <strong>{runnerName || "Pelari Singapadu"}</strong>
           <small>{trackName}</small>
         </div>
-        <span className="run-summary-activity-pill">
-          <Activity size={13} aria-hidden="true" />
-          Run
-        </span>
       </header>
 
       <section className="run-summary-route" aria-label={`Visual rute ${trackName}`}>
@@ -296,19 +279,9 @@ const RunnerProfileCard = ({
           className="run-summary-route-map"
           viewBox="0 0 640 280"
           role="img"
-          aria-label={`Route trace ${trackName}`}
+          aria-label={`Rute ${trackName}`}
         >
-          <defs>
-            <pattern id="profile-route-grid" width="42" height="42" patternUnits="userSpaceOnUse">
-              <path d="M 42 0 L 0 0 0 42" className="run-summary-map-grid" />
-            </pattern>
-          </defs>
           <rect width="640" height="280" className="run-summary-map-background" />
-          <rect width="640" height="280" fill="url(#profile-route-grid)" />
-          <path d="M -20 72 C 116 12, 236 96, 358 34 S 548 22, 680 104" className="run-summary-map-road broad" />
-          <path d="M 84 -20 C 162 76, 130 182, 248 306" className="run-summary-map-road" />
-          <path d="M 474 -30 C 416 80, 528 154, 444 310" className="run-summary-map-road" />
-          <path d="M -20 226 C 134 180, 260 246, 394 194 S 546 174, 672 238" className="run-summary-map-road minor" />
           <polyline
             points={routeGeometry.points}
             className="run-summary-route-halo"
@@ -351,7 +324,6 @@ const RunnerProfileCard = ({
         </svg>
         <div className="run-summary-route-caption">
           <span><MapPin size={13} aria-hidden="true" /> Singapadu Tengah, Bali</span>
-          <strong>All-time profile</strong>
         </div>
       </section>
 
@@ -359,29 +331,29 @@ const RunnerProfileCard = ({
         <span>
           <strong>{(totalDistanceMeters / 1000).toFixed(2)}</strong>
           <small>km</small>
-          <em>Distance</em>
+          <em>Jarak</em>
         </span>
         <span>
           <strong>{formatDuration(totalDurationSeconds)}</strong>
-          <em>Moving time</em>
+          <em>Waktu bergerak</em>
         </span>
         <span>
           <strong>{averagePace}</strong>
           <small>/km</small>
-          <em>Avg pace</em>
+          <em>Pace rata-rata</em>
         </span>
       </div>
 
       <div className="run-summary-secondary-stats">
-        <span><strong>{completedRuns}</strong><small>Runs</small></span>
-        <span><strong>{bestPace}</strong><small>Best pace</small></span>
-        <span><strong>{formatDistance(longestRunMeters)}</strong><small>Longest</small></span>
+        <span><strong>{completedRuns}</strong><small>Lari selesai</small></span>
+        <span><strong>{bestPace}</strong><small>Pace terbaik</small></span>
+        <span><strong>{formatDistance(longestRunMeters)}</strong><small>Terjauh</small></span>
       </div>
 
       <section className="run-summary-trophies" aria-label={`${achievements.length} achievement terbuka`}>
         <div className="run-summary-trophies-heading">
-          <span>Achievements</span>
-          <strong>{achievements.length} unlocked</strong>
+          <span>Achievement</span>
+          <strong>{achievements.length} terbuka</strong>
         </div>
         <div className="run-summary-badge-grid">
           {achievements.map((achievement) => (
@@ -398,7 +370,7 @@ const RunnerProfileCard = ({
       </section>
 
       <footer className="run-summary-footer">
-        <span>Updated {latestDate}</span>
+        <span>Diperbarui {latestDate}</span>
         <strong>KKN PPM PNB · 2026</strong>
       </footer>
     </article>
@@ -2792,8 +2764,7 @@ export default function HomePage() {
             routePoints={track?.waypoints ?? []}
           />
           <p className="shared-run-summary-note">
-            Profil ini membawa seluruh achievement terbuka dan statistik all-time melalui URL compact
-            v{sharedAchievementCollection.protocolVersion}, tanpa backend.
+            Dibagikan dari Singapadu Jogging.
           </p>
         </section>
       ) : null}
@@ -3310,8 +3281,7 @@ export default function HomePage() {
                     </button>
                   </div>
                   <p>
-                    Bagikan satu profil lengkap berisi seluruh badge dan statistik, atau PNG
-                    1080 × 1350 yang siap dikirim ke aplikasi sosial.
+                    Bagikan profil sebagai tautan atau gambar PNG.
                   </p>
                 </div>
 

@@ -137,18 +137,6 @@ const truncate = (value: string, maxLength: number): string => {
     : `${characters.slice(0, Math.max(1, maxLength - 1)).join("")}…`;
 };
 
-const getRunnerInitials = (runnerName: string): string => {
-  const normalized = normalizeRunnerName(runnerName);
-  if (!normalized) {
-    return "RS";
-  }
-  const words = normalized.split(" ").filter(Boolean);
-  return words
-    .slice(0, 2)
-    .map((word) => Array.from(word)[0]?.toUpperCase() ?? "")
-    .join("");
-};
-
 const slugify = (value: string): string => {
   const slug = normalizeRunnerName(value)
     .normalize("NFKD")
@@ -241,9 +229,9 @@ export const buildRunnerProfileSvg = ({
   }).format(new Date(payload.latestRunAt));
   const routeGeometry = buildRunnerProfileRouteGeometry(
     routePoints,
-    860,
-    300,
-    34
+    880,
+    310,
+    30
   );
   const endpointsOverlap =
     Math.hypot(
@@ -253,9 +241,9 @@ export const buildRunnerProfileSvg = ({
   const badgeWidth = 222;
   const badgeHeight = 76;
   const badgeGapX = 12;
-  const badgeGapY = 12;
+  const badgeGapY = 16;
   const badgeStartX = 72;
-  const badgeStartY = 1074;
+  const badgeStartY = 1012;
 
   const badgeMarkup = achievements
     .map((achievement, index) => {
@@ -265,14 +253,14 @@ export const buildRunnerProfileSvg = ({
       const y = badgeStartY + row * (badgeHeight + badgeGapY);
       const color = TIER_COLORS[achievement.tier];
       return `
-        <g class="achievement-badge">
-          <rect x="${x}" y="${y}" width="${badgeWidth}" height="${badgeHeight}" rx="16" fill="#fff" stroke="#deded9"/>
-          <circle cx="${x + 35}" cy="${y + 38}" r="23" fill="${color.soft}"/>
-          <g transform="translate(${x + 35} ${y + 38}) scale(0.68) translate(${-x - 35} ${-y - 38})">
-            ${renderBadgeIcon(achievement.icon, x + 35, y + 38, color.accent)}
+        <g>
+          <circle cx="${x + 28}" cy="${y + 34}" r="23" fill="${color.soft}"/>
+          <g transform="translate(${x + 28} ${y + 34}) scale(0.66) translate(${-x - 28} ${-y - 34})">
+            ${renderBadgeIcon(achievement.icon, x + 28, y + 34, color.accent)}
           </g>
-          <text x="${x + 67}" y="${y + 34}" class="badge-title">${escapeXml(truncate(achievement.title, 18))}</text>
-          <text x="${x + 67}" y="${y + 56}" class="badge-tier" fill="${color.accent}">${TIER_LABELS[achievement.tier]}</text>
+          <text x="${x + 60}" y="${y + 30}" class="badge-title">${escapeXml(truncate(achievement.title, 18))}</text>
+          <text x="${x + 60}" y="${y + 52}" class="badge-tier" fill="${color.accent}">${TIER_LABELS[achievement.tier]}</text>
+          <line x1="${x}" y1="${y + badgeHeight}" x2="${x + badgeWidth}" y2="${y + badgeHeight}" stroke="#e2e2de"/>
         </g>
       `;
     })
@@ -280,119 +268,80 @@ export const buildRunnerProfileSvg = ({
 
   const routeMarkerMarkup = endpointsOverlap
     ? `
-      <circle cx="${routeGeometry.end.x}" cy="${routeGeometry.end.y}" r="18" fill="#fff"/>
-      <circle cx="${routeGeometry.end.x}" cy="${routeGeometry.end.y}" r="11" fill="#242428" stroke="#fc5200" stroke-width="5"/>
+      <circle cx="${routeGeometry.end.x}" cy="${routeGeometry.end.y}" r="14" fill="#fff"/>
+      <circle cx="${routeGeometry.end.x}" cy="${routeGeometry.end.y}" r="9" fill="#242428"/>
     `
     : `
-      <circle cx="${routeGeometry.start.x}" cy="${routeGeometry.start.y}" r="15" fill="#fff"/>
-      <circle cx="${routeGeometry.start.x}" cy="${routeGeometry.start.y}" r="9" fill="#2e8b57"/>
-      <circle cx="${routeGeometry.end.x}" cy="${routeGeometry.end.y}" r="16" fill="#fff"/>
-      <circle cx="${routeGeometry.end.x}" cy="${routeGeometry.end.y}" r="10" fill="#242428"/>
+      <circle cx="${routeGeometry.start.x}" cy="${routeGeometry.start.y}" r="9" fill="#2e8b57" stroke="#fff" stroke-width="5"/>
+      <circle cx="${routeGeometry.end.x}" cy="${routeGeometry.end.y}" r="9" fill="#242428" stroke="#fff" stroke-width="5"/>
     `;
 
   return `
     <svg xmlns="http://www.w3.org/2000/svg" width="${ARTWORK_WIDTH}" height="${ARTWORK_HEIGHT}" viewBox="0 0 ${ARTWORK_WIDTH} ${ARTWORK_HEIGHT}">
       <defs>
-        <pattern id="mapGrid" width="58" height="58" patternUnits="userSpaceOnUse">
-          <path d="M 58 0 L 0 0 0 58" fill="none" stroke="#d9dcd7" stroke-width="2"/>
-        </pattern>
-        <clipPath id="mapClip">
-          <rect x="48" y="200" width="984" height="405" rx="30"/>
-        </clipPath>
-        <filter id="cardShadow" x="-20%" y="-20%" width="140%" height="160%">
-          <feDropShadow dx="0" dy="18" stdDeviation="26" flood-color="#242428" flood-opacity="0.12"/>
-        </filter>
-        <filter id="routeShadow" x="-20%" y="-20%" width="140%" height="140%">
-          <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#8f2f00" flood-opacity="0.26"/>
-        </filter>
         <style>
           text { font-family: Arial, Helvetica, sans-serif; }
-          .eyebrow { fill: #fc5200; font-size: 18px; font-weight: 800; letter-spacing: 3px; }
-          .profile-name { fill: #242428; font-size: 43px; font-weight: 800; letter-spacing: -1px; }
+          .eyebrow { fill: #fc5200; font-size: 18px; font-weight: 700; }
+          .profile-name { fill: #242428; font-size: 43px; font-weight: 700; letter-spacing: -1px; }
           .profile-track { fill: #6d6d72; font-size: 22px; }
-          .activity-pill { fill: #242428; font-size: 16px; font-weight: 800; letter-spacing: 1.5px; }
-          .map-label { fill: #242428; font-size: 17px; font-weight: 800; letter-spacing: 1px; }
-          .map-meta { fill: #6d6d72; font-size: 15px; font-weight: 700; letter-spacing: 1px; }
-          .section-eyebrow { fill: #6d6d72; font-size: 16px; font-weight: 800; letter-spacing: 2px; }
-          .primary-stat-value { fill: #242428; font-size: 56px; font-weight: 800; letter-spacing: -2px; }
-          .primary-stat-label { fill: #6d6d72; font-size: 16px; font-weight: 800; letter-spacing: 1.5px; }
-          .secondary-stat-value { fill: #242428; font-size: 27px; font-weight: 800; }
-          .secondary-stat-label { fill: #77777c; font-size: 14px; font-weight: 700; letter-spacing: 1px; }
-          .section-title { fill: #242428; font-size: 25px; font-weight: 800; letter-spacing: 1px; }
-          .section-count { fill: #fc5200; font-size: 18px; font-weight: 800; }
-          .badge-title { fill: #242428; font-size: 16px; font-weight: 800; }
-          .badge-tier { font-size: 12px; font-weight: 800; letter-spacing: 1.5px; }
+          .header-meta { fill: #242428; font-size: 19px; font-weight: 700; }
+          .location { fill: #5f5f63; font-size: 17px; font-weight: 600; }
+          .section-title { fill: #242428; font-size: 25px; font-weight: 700; }
+          .stat-value { fill: #242428; font-size: 49px; font-weight: 700; letter-spacing: -1.5px; }
+          .stat-label { fill: #6d6d72; font-size: 16px; font-weight: 600; }
+          .small-stat-value { fill: #242428; font-size: 27px; font-weight: 700; }
+          .small-stat-label { fill: #77777c; font-size: 14px; font-weight: 600; }
+          .section-count { fill: #fc5200; font-size: 18px; font-weight: 700; }
+          .badge-title { fill: #242428; font-size: 16px; font-weight: 700; }
+          .badge-tier { font-size: 12px; font-weight: 700; letter-spacing: 1px; }
           .footer { fill: #747478; font-size: 17px; }
-          .footer-brand { fill: #242428; font-size: 17px; font-weight: 800; letter-spacing: 0.8px; }
+          .footer-brand { fill: #242428; font-size: 17px; font-weight: 700; }
         </style>
       </defs>
 
-      <rect width="${ARTWORK_WIDTH}" height="${ARTWORK_HEIGHT}" fill="#f3f3f0"/>
-      <rect x="0" y="0" width="${ARTWORK_WIDTH}" height="12" fill="#fc5200"/>
+      <rect width="${ARTWORK_WIDTH}" height="${ARTWORK_HEIGHT}" fill="#fff"/>
+      <rect x="72" y="54" width="6" height="112" fill="#fc5200"/>
+      <text x="100" y="78" class="eyebrow">Singapadu Jogging</text>
+      <text x="100" y="126" class="profile-name">${escapeXml(truncate(runnerName, 28))}</text>
+      <text x="100" y="160" class="profile-track">${escapeXml(truncate(trackName, 48))}</text>
+      <text x="1008" y="92" text-anchor="end" class="header-meta">${payload.completedRuns} lari selesai</text>
 
-      <circle cx="96" cy="100" r="35" fill="#fc5200"/>
-      <text x="96" y="109" text-anchor="middle" fill="#fff" font-size="24" font-weight="800">${escapeXml(getRunnerInitials(runnerName))}</text>
-      <text x="150" y="78" class="eyebrow">SINGAPADU JOGGING</text>
-      <text x="150" y="124" class="profile-name">${escapeXml(truncate(runnerName, 28))}</text>
-      <text x="150" y="158" class="profile-track">${escapeXml(truncate(trackName, 48))}</text>
-      <rect x="800" y="66" width="208" height="42" rx="21" fill="#fff" stroke="#d8d8d4"/>
-      <circle cx="827" cy="87" r="8" fill="#fc5200"/>
-      <text x="847" y="93" class="activity-pill">RUN · ALL-TIME</text>
-
-      <g clip-path="url(#mapClip)" filter="url(#cardShadow)">
-        <rect x="48" y="200" width="984" height="405" fill="#e9ece7"/>
-        <rect x="48" y="200" width="984" height="405" fill="url(#mapGrid)" opacity="0.78"/>
-        <g transform="translate(48 200)" fill="none" stroke-linecap="round">
-          <path d="M -30 128 C 210 48, 354 98, 548 12 S 880 24, 1040 146" stroke="#fff" stroke-width="24"/>
-          <path d="M 92 -28 C 182 120, 170 250, 316 432" stroke="#f8f8f5" stroke-width="18"/>
-          <path d="M 710 -30 C 630 120, 770 218, 672 454" stroke="#fff" stroke-width="20"/>
-          <path d="M -20 326 C 204 278, 330 362, 520 292 S 820 246, 1040 350" stroke="#f8f8f5" stroke-width="16"/>
-          <path d="M 406 -40 C 482 88, 416 190, 532 442" stroke="#d4d8d2" stroke-width="5" stroke-dasharray="12 14"/>
-        </g>
-        <g transform="translate(110 250)">
-          <polyline points="${routeGeometry.points}" fill="none" stroke="#fff" stroke-width="28" stroke-linecap="round" stroke-linejoin="round" opacity="0.95"/>
-          <polyline points="${routeGeometry.points}" fill="none" stroke="#fc5200" stroke-width="15" stroke-linecap="round" stroke-linejoin="round" filter="url(#routeShadow)"/>
-          ${routeMarkerMarkup}
-        </g>
-        <rect x="72" y="536" width="270" height="44" rx="22" fill="#fff" fill-opacity="0.94"/>
-        <text x="94" y="563" class="map-label">SINGLE QR ROUTE</text>
-        <text x="1008" y="563" text-anchor="end" class="map-meta">SINGAPADU TENGAH · BALI</text>
+      <rect x="72" y="205" width="936" height="400" fill="#f0f0ed" stroke="#d9d9d5"/>
+      <g transform="translate(100 250)">
+        <polyline points="${routeGeometry.points}" fill="none" stroke="#fff" stroke-width="25" stroke-linecap="round" stroke-linejoin="round"/>
+        <polyline points="${routeGeometry.points}" fill="none" stroke="#fc5200" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+        ${routeMarkerMarkup}
       </g>
+      <text x="92" y="578" class="location">Singapadu Tengah, Bali</text>
 
-      <g filter="url(#cardShadow)">
-        <rect x="48" y="632" width="984" height="363" rx="30" fill="#fff"/>
-      </g>
-      <text x="80" y="682" class="section-eyebrow">ALL-TIME RUNNING STATS</text>
+      <text x="72" y="660" class="section-title">Ringkasan lari</text>
+      <line x1="72" y1="680" x2="1008" y2="680" stroke="#d9d9d5"/>
+      <line x1="370" y1="706" x2="370" y2="806" stroke="#e3e3df"/>
+      <line x1="700" y1="706" x2="700" y2="806" stroke="#e3e3df"/>
+      <text x="72" y="760" class="stat-value">${(payload.totalDistanceMeters / 1000).toFixed(2)}</text>
+      <text x="72" y="794" class="stat-label">Jarak · km</text>
+      <text x="410" y="760" class="stat-value">${formatDuration(payload.totalDurationSeconds)}</text>
+      <text x="410" y="794" class="stat-label">Waktu bergerak</text>
+      <text x="740" y="760" class="stat-value">${payload.averagePaceSecondsPerKm > 0 ? formatPace(payload.averagePaceSecondsPerKm / 60).replace(" /km", "") : "--"}</text>
+      <text x="740" y="794" class="stat-label">Pace rata-rata · /km</text>
 
-      <line x1="370" y1="714" x2="370" y2="835" stroke="#e5e5e2" stroke-width="2"/>
-      <line x1="700" y1="714" x2="700" y2="835" stroke="#e5e5e2" stroke-width="2"/>
-      <text x="80" y="778" class="primary-stat-value">${(payload.totalDistanceMeters / 1000).toFixed(2)}</text>
-      <text x="80" y="816" class="primary-stat-label">DISTANCE · KM</text>
-      <text x="410" y="778" class="primary-stat-value">${formatDuration(payload.totalDurationSeconds)}</text>
-      <text x="410" y="816" class="primary-stat-label">MOVING TIME</text>
-      <text x="740" y="778" class="primary-stat-value">${payload.averagePaceSecondsPerKm > 0 ? formatPace(payload.averagePaceSecondsPerKm / 60).replace(" /km", "") : "--"}</text>
-      <text x="740" y="816" class="primary-stat-label">AVERAGE PACE · /KM</text>
+      <line x1="72" y1="830" x2="1008" y2="830" stroke="#e3e3df"/>
+      <text x="72" y="875" class="small-stat-value">${payload.completedRuns}</text>
+      <text x="72" y="905" class="small-stat-label">Lari selesai</text>
+      <text x="330" y="875" class="small-stat-value">${payload.bestPaceSecondsPerKm > 0 ? formatPace(payload.bestPaceSecondsPerKm / 60).replace(" /km", "") : "--"}</text>
+      <text x="330" y="905" class="small-stat-label">Pace terbaik · /km</text>
+      <text x="600" y="875" class="small-stat-value">${formatDistance(payload.longestRunMeters)}</text>
+      <text x="600" y="905" class="small-stat-label">Lari terjauh</text>
+      <text x="870" y="875" class="small-stat-value">${achievements.length}</text>
+      <text x="870" y="905" class="small-stat-label">Achievement</text>
 
-      <line x1="80" y1="854" x2="1000" y2="854" stroke="#e5e5e2" stroke-width="2"/>
-      <line x1="310" y1="878" x2="310" y2="960" stroke="#ececea" stroke-width="2"/>
-      <line x1="540" y1="878" x2="540" y2="960" stroke="#ececea" stroke-width="2"/>
-      <line x1="770" y1="878" x2="770" y2="960" stroke="#ececea" stroke-width="2"/>
-      <text x="80" y="916" class="secondary-stat-value">${payload.completedRuns}</text>
-      <text x="80" y="946" class="secondary-stat-label">RUNS</text>
-      <text x="340" y="916" class="secondary-stat-value">${payload.bestPaceSecondsPerKm > 0 ? formatPace(payload.bestPaceSecondsPerKm / 60).replace(" /km", "") : "--"}</text>
-      <text x="340" y="946" class="secondary-stat-label">BEST PACE · /KM</text>
-      <text x="570" y="916" class="secondary-stat-value">${formatDistance(payload.longestRunMeters)}</text>
-      <text x="570" y="946" class="secondary-stat-label">LONGEST RUN</text>
-      <text x="800" y="916" class="secondary-stat-value">${achievements.length}</text>
-      <text x="800" y="946" class="secondary-stat-label">ACHIEVEMENTS</text>
-
-      <text x="72" y="1040" class="section-title">ACHIEVEMENTS</text>
-      <text x="1008" y="1040" text-anchor="end" class="section-count">${achievements.length} UNLOCKED</text>
+      <text x="72" y="968" class="section-title">Achievement</text>
+      <text x="1008" y="968" text-anchor="end" class="section-count">${achievements.length} terbuka</text>
       ${badgeMarkup}
 
-      <line x1="72" y1="1272" x2="1008" y2="1272" stroke="#d8d8d4" stroke-width="2"/>
-      <text x="72" y="1315" class="footer">UPDATED ${escapeXml(latestRunDate.toUpperCase())}</text>
-      <text x="1008" y="1315" text-anchor="end" class="footer-brand">KKN PPM PNB · SINGAPADU TENGAH · 2026</text>
+      <line x1="72" y1="1248" x2="1008" y2="1248" stroke="#d8d8d4"/>
+      <text x="72" y="1292" class="footer">Diperbarui ${escapeXml(latestRunDate)}</text>
+      <text x="1008" y="1292" text-anchor="end" class="footer-brand">KKN PPM PNB Singapadu Tengah · 2026</text>
     </svg>
   `.trim();
 };

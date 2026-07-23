@@ -42,8 +42,8 @@ describe("runner profile social artwork", () => {
 
     expect(svg).toContain('width="1080"');
     expect(svg).toContain('height="1350"');
-    expect(svg).toContain("SINGAPADU JOGGING");
-    expect(svg).toContain("ALL-TIME RUNNING STATS");
+    expect(svg).toContain("Singapadu Jogging");
+    expect(svg).toContain("Ringkasan lari");
     expect(svg).toContain('stroke="#fc5200"');
     expect(svg).toContain("58.50");
     expect(svg).toContain("Langkah Pertama");
