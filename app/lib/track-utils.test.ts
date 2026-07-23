@@ -13,6 +13,8 @@ import type { TrackWaypoint } from "./types";
 type TrackGeoJson = {
   features: Array<{
     properties: {
+      startRadiusMeters: number;
+      endFinishRadiusMeters: number;
       checkpoints: Array<{
         id: string;
         name: string;
@@ -161,6 +163,12 @@ describe("rolling pace", () => {
 });
 
 describe("pause and checkpoint integrations", () => {
+  test("uses accessible 50 meter start and finish areas", () => {
+    const properties = trackPayload.features[0].properties;
+    expect(properties.startRadiusMeters).toBe(50);
+    expect(properties.endFinishRadiusMeters).toBe(50);
+  });
+
   test("excludes completed and active pause time from session duration", () => {
     expect(calculateActiveDurationSeconds({
       startedAt: 1_000,

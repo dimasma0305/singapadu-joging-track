@@ -32,8 +32,12 @@ import {
   Moon,
   Loader2,
   Award,
-  Download,
   Share2,
+  Medal,
+  Footprints,
+  Crown,
+  Route,
+  LockKeyhole,
 } from "lucide-react";
 import type {
   RunSession,
@@ -67,10 +71,17 @@ import {
   parseWarningHistory,
 } from "./lib/storage-utils";
 import {
-  downloadCompletionCertificate,
-  normalizeCertificateName,
-  shareCompletionCertificate,
-} from "./lib/certificate-utils";
+  buildAchievementProgress,
+  createAchievementSharePayload,
+  decodeAchievementHash,
+  normalizeRunnerName,
+  shareAchievementLink,
+  summarizeAchievements,
+  type AchievementIconName,
+  type AchievementProgress,
+  type AchievementTier,
+  type DecodedAchievementShare,
+} from "./lib/achievement-utils";
 
 type GeolocationPermissionState = PermissionState | "unknown" | "unsupported";
 type GpsHealthState = "unknown" | "checking" | "ready" | "permission-denied" | "timeout" | "provider-off" | "error";
@@ -95,11 +106,13 @@ const TrackMapDynamic = dynamic(() => import("./components/TrackMap"), {
 
 const TRACK_KEY = "joging-track:session-history";
 const WARNING_LOG_KEY = "joging-track:warning-history";
-const CERTIFICATE_NAME_KEY = "joging-track:certificate-name";
+const ACHIEVEMENT_NAME_KEY = "joging-track:achievement-name";
+const LEGACY_CERTIFICATE_NAME_KEY = "joging-track:certificate-name";
 const SESSION_HISTORY_LIMIT = 25;
 const PUBLIC_BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 const TRACK_FILE = `${PUBLIC_BASE_PATH}/track.json`;
-const DEFAULT_START_RADIUS_METERS = 25;
+const DEFAULT_START_RADIUS_METERS = 50;
+const DEFAULT_FINISH_RADIUS_METERS = 50;
 const MAX_START_GPS_STALE_AGE_MS = 8_000;
 const START_POSITION_TIMEOUT_MS = 5000;
 const START_POSITION_MAX_AGE_MS = 5_000;
@@ -108,6 +121,40 @@ const RECENT_GPS_GRACE_MS = 30_000;
 const GEOLOCATION_PERMISSION_DENIED = 1;
 const GEOLOCATION_POSITION_UNAVAILABLE = 2;
 const GEOLOCATION_TIMEOUT = 3;
+
+const ACHIEVEMENT_TIER_LABELS: Record<AchievementTier, string> = {
+  bronze: "Bronze",
+  silver: "Silver",
+  gold: "Gold",
+  platinum: "Platinum",
+  special: "Special",
+};
+
+const AchievementIcon = ({
+  name,
+  size = 24,
+}: {
+  name: AchievementIconName;
+  size?: number;
+}) => {
+  const iconProps = { size, "aria-hidden": true } as const;
+  switch (name) {
+    case "footprints":
+      return <Footprints {...iconProps} />;
+    case "medal":
+      return <Medal {...iconProps} />;
+    case "trophy":
+      return <Trophy {...iconProps} />;
+    case "crown":
+      return <Crown {...iconProps} />;
+    case "route":
+      return <Route {...iconProps} />;
+    case "flame":
+      return <Flame {...iconProps} />;
+    case "zap":
+      return <Zap {...iconProps} />;
+  }
+};
 
 const isGeolocationPositionError = (error: unknown): error is GeolocationPositionError => {
   if (typeof error !== "object" || error === null || !("code" in error)) {
@@ -277,7 +324,8 @@ const normalizeTrackPayload = (payload: unknown, fallbackTrackId: string): Track
       warningAreas: [],
       startAt: { lat: -8.5797866, lng: 115.2606812 },
       endAt: { lat: -8.5797866, lng: 115.2606812 },
-      endFinishRadiusMeters: 50,
+      startRadiusMeters: DEFAULT_START_RADIUS_METERS,
+      endFinishRadiusMeters: DEFAULT_FINISH_RADIUS_METERS,
       offRouteThresholdMeters: 55,
     };
   }
@@ -323,7 +371,7 @@ const normalizeTrackPayload = (payload: unknown, fallbackTrackId: string): Track
         ? raw.endFinishRadiusMeters
         : isNumber(geojsonProps.endFinishRadiusMeters)
           ? geojsonProps.endFinishRadiusMeters
-          : 50,
+          : DEFAULT_FINISH_RADIUS_METERS,
     offRouteThresholdMeters: isNumber(raw.offRouteThresholdMeters)
       ? raw.offRouteThresholdMeters
       : isNumber(geojsonProps.offRouteThresholdMeters)
@@ -381,11 +429,10 @@ export default function HomePage() {
   // User Settings State
   const [useSoundAndHaptic, setUseSoundAndHaptic] = useState(true);
   const [mapTheme, setMapTheme] = useState<"dark" | "light">("light");
-  const [certificateName, setCertificateName] = useState("");
-  const [certificateNameError, setCertificateNameError] = useState<string | null>(null);
-  const [certificateStatus, setCertificateStatus] = useState("");
-  const [downloadingCertificateId, setDownloadingCertificateId] = useState<string | null>(null);
-  const [sharingCertificateId, setSharingCertificateId] = useState<string | null>(null);
+  const [runnerName, setRunnerName] = useState("");
+  const [achievementStatus, setAchievementStatus] = useState("");
+  const [sharingAchievementId, setSharingAchievementId] = useState<string | null>(null);
+  const [sharedAchievement, setSharedAchievement] = useState<DecodedAchievementShare | null>(null);
   const [insecureContext, setInsecureContext] = useState(false);
 
   // Simulation State
@@ -559,6 +606,33 @@ export default function HomePage() {
     return "idle";
   }, [session.status]);
 
+  const achievementSummary = useMemo(
+    () => summarizeAchievements(sessionHistory),
+    [sessionHistory]
+  );
+
+  const achievementProgress = useMemo(
+    () => buildAchievementProgress(sessionHistory),
+    [sessionHistory]
+  );
+
+  const unlockedAchievements = useMemo(
+    () => achievementProgress.filter((entry) => entry.unlocked),
+    [achievementProgress]
+  );
+
+  const latestUnlockedAchievement = useMemo<AchievementProgress | null>(
+    () =>
+      unlockedAchievements.reduce<AchievementProgress | null>(
+        (latest, entry) =>
+          !latest || (entry.unlockedAt ?? 0) >= (latest.unlockedAt ?? 0)
+            ? entry
+            : latest,
+        null
+      ),
+    [unlockedAchievements]
+  );
+
   const locationPermissionMessage = useMemo(() => {
     if (gpsHealth === "provider-off") {
       return "Layanan lokasi tidak aktif / tidak tersedia. Aktifkan GPS pada perangkat lalu muat ulang aplikasi.";
@@ -650,15 +724,43 @@ export default function HomePage() {
       if (themeVal === "dark" || themeVal === "light") {
         setMapTheme(themeVal as "dark" | "light");
       }
-      const savedCertificateName = localStorage.getItem(CERTIFICATE_NAME_KEY);
-      if (savedCertificateName) {
-        setCertificateName(normalizeCertificateName(savedCertificateName));
+      const savedRunnerName =
+        localStorage.getItem(ACHIEVEMENT_NAME_KEY) ??
+        localStorage.getItem(LEGACY_CERTIFICATE_NAME_KEY);
+      if (savedRunnerName) {
+        const normalizedName = normalizeRunnerName(savedRunnerName);
+        setRunnerName(normalizedName);
+        localStorage.setItem(ACHIEVEMENT_NAME_KEY, normalizedName);
       }
 
       setSessionHistory(
         parseSessionHistory(localStorage.getItem(TRACK_KEY), SESSION_HISTORY_LIMIT)
       );
     }
+  }, []);
+
+  useEffect(() => {
+    const readSharedAchievement = () => {
+      try {
+        setSharedAchievement(decodeAchievementHash(window.location.hash));
+      } catch (error) {
+        setSharedAchievement(null);
+        const message = error instanceof Error
+          ? error.message
+          : "Tautan achievement tidak dapat dibaca.";
+        enqueueToast({
+          title: "Tautan Achievement Tidak Valid",
+          message,
+          severity: "error",
+        });
+      }
+    };
+
+    readSharedAchievement();
+    window.addEventListener("hashchange", readSharedAchievement);
+    return () => {
+      window.removeEventListener("hashchange", readSharedAchievement);
+    };
   }, []);
 
   // Check for secure context and GPS permission status on load
@@ -817,108 +919,79 @@ export default function HomePage() {
     sessionRef.current = next;
   };
 
-  const updateCertificateName = (value: string) => {
-    setCertificateName(value.slice(0, 60));
-    if (value.trim()) {
-      setCertificateNameError(null);
-    }
+  const updateRunnerName = (value: string) => {
+    setRunnerName(Array.from(value).slice(0, 40).join(""));
   };
 
-  const persistCertificateName = () => {
-    const normalizedName = normalizeCertificateName(certificateName);
-    setCertificateName(normalizedName);
+  const persistRunnerName = () => {
+    const normalizedName = normalizeRunnerName(runnerName);
+    setRunnerName(normalizedName);
     if (normalizedName) {
-      localStorage.setItem(CERTIFICATE_NAME_KEY, normalizedName);
+      localStorage.setItem(ACHIEVEMENT_NAME_KEY, normalizedName);
+    } else {
+      localStorage.removeItem(ACHIEVEMENT_NAME_KEY);
     }
   };
 
-  const onDownloadCertificate = async (completedSession: RunSession) => {
-    if (!track || completedSession.status !== "finished") {
+  const onShareAchievement = async (progressEntry: AchievementProgress) => {
+    if (!track || !progressEntry.unlocked) {
       return;
     }
 
-    const normalizedName = normalizeCertificateName(certificateName);
-    if (!normalizedName) {
-      const message = "Masukkan nama peserta sebelum mengunduh sertifikat.";
-      setCertificateNameError(message);
-      setCertificateStatus(message);
-      enqueueToast({ title: "Nama Diperlukan", message, severity: "warning" });
-      return;
+    const normalizedName = normalizeRunnerName(runnerName);
+    setRunnerName(normalizedName);
+    if (normalizedName) {
+      localStorage.setItem(ACHIEVEMENT_NAME_KEY, normalizedName);
     }
 
-    setCertificateName(normalizedName);
-    setCertificateNameError(null);
-    setCertificateStatus("Sedang membuat sertifikat...");
-    setDownloadingCertificateId(completedSession.sessionId);
-    localStorage.setItem(CERTIFICATE_NAME_KEY, normalizedName);
+    setAchievementStatus("Sedang menyiapkan tautan achievement...");
+    setSharingAchievementId(progressEntry.definition.id);
 
     try {
-      const filename = await downloadCompletionCertificate({
-        participantName: normalizedName,
+      const payload = createAchievementSharePayload(
+        progressEntry,
+        achievementSummary,
+        normalizedName
+      );
+      const result = await shareAchievementLink({
+        payload,
+        baseUrl: window.location.href,
         trackName: track.name,
-        session: completedSession,
-      });
-      const message = `Sertifikat ${filename} mulai diunduh.`;
-      setCertificateStatus(message);
-      enqueueToast({ title: "Sertifikat Siap", message, severity: "info" });
-    } catch (error) {
-      const message = error instanceof Error
-        ? error.message
-        : "Sertifikat gagal dibuat. Silakan coba lagi.";
-      setCertificateStatus(message);
-      enqueueToast({ title: "Sertifikat Gagal", message, severity: "error" });
-    } finally {
-      setDownloadingCertificateId(null);
-    }
-  };
-
-  const onShareCertificate = async (completedSession: RunSession) => {
-    if (!track || completedSession.status !== "finished") {
-      return;
-    }
-
-    const normalizedName = normalizeCertificateName(certificateName);
-    if (!normalizedName) {
-      const message = "Masukkan nama peserta sebelum membagikan sertifikat.";
-      setCertificateNameError(message);
-      setCertificateStatus(message);
-      enqueueToast({ title: "Nama Diperlukan", message, severity: "warning" });
-      return;
-    }
-
-    setCertificateName(normalizedName);
-    setCertificateNameError(null);
-    setCertificateStatus("Sedang menyiapkan sertifikat untuk dibagikan...");
-    setSharingCertificateId(completedSession.sessionId);
-    localStorage.setItem(CERTIFICATE_NAME_KEY, normalizedName);
-
-    try {
-      const outcome = await shareCompletionCertificate({
-        participantName: normalizedName,
-        trackName: track.name,
-        session: completedSession,
       });
       const messages = {
-        shared: "Sertifikat berhasil dibagikan.",
-        "shared-without-file": "Teks berhasil dibagikan dan file PNG sudah diunduh.",
-        "downloaded-and-copied": "File PNG diunduh dan teks berbagi disalin ke clipboard.",
-        downloaded: "File PNG diunduh. Pilih file tersebut saat membuka aplikasi media sosial.",
-        cancelled: "Berbagi sertifikat dibatalkan.",
+        shared: "Tautan achievement berhasil dibagikan.",
+        copied: "Tautan achievement disalin ke clipboard.",
+        cancelled: "Berbagi achievement dibatalkan.",
+        unavailable: "Browser tidak dapat menyalin otomatis. Salin tautan yang ditampilkan.",
       } as const;
-      const message = messages[outcome];
-      setCertificateStatus(message);
-      if (outcome !== "cancelled") {
-        enqueueToast({ title: "Bagikan Sertifikat", message, severity: "info" });
+      const message = messages[result.outcome];
+      setAchievementStatus(message);
+
+      if (result.outcome === "unavailable") {
+        window.prompt("Salin tautan achievement ini:", result.url);
+      }
+      if (result.outcome !== "cancelled") {
+        enqueueToast({
+          title: "Bagikan Achievement",
+          message,
+          severity: result.outcome === "unavailable" ? "warning" : "info",
+        });
       }
     } catch (error) {
       const message = error instanceof Error
         ? error.message
-        : "Sertifikat gagal dibagikan. Silakan coba lagi.";
-      setCertificateStatus(message);
+        : "Achievement gagal dibagikan. Silakan coba lagi.";
+      setAchievementStatus(message);
       enqueueToast({ title: "Gagal Membagikan", message, severity: "error" });
     } finally {
-      setSharingCertificateId(null);
+      setSharingAchievementId(null);
     }
+  };
+
+  const closeSharedAchievement = () => {
+    const cleanUrl = `${window.location.pathname}${window.location.search}`;
+    window.history.replaceState(null, "", cleanUrl);
+    setSharedAchievement(null);
   };
 
   const resetProgressTracking = () => {
@@ -1220,7 +1293,7 @@ export default function HomePage() {
       const distanceToFinish = currentPosition
         ? haversineMeters(currentPosition, track.endAt)
         : Number.POSITIVE_INFINITY;
-      const finishRadius = track.endFinishRadiusMeters ?? 25;
+      const finishRadius = track.endFinishRadiusMeters ?? DEFAULT_FINISH_RADIUS_METERS;
       const hasCompletedOrderedRoute =
         current.closestIndex >= finalWaypointIndex && completionPercent >= 99;
       const isNearFinish = distanceToFinish <= finishRadius;
@@ -1812,7 +1885,8 @@ export default function HomePage() {
               ? (routeProgressResult.routeProgressMeters / trackDistance) * 100
               : 0;
           const completedOrderedRoute = progressWaypointIndex >= track.waypoints.length - 1;
-          const nearFinish = distanceToEnd <= (track.endFinishRadiusMeters ?? 25);
+          const nearFinish =
+            distanceToEnd <= (track.endFinishRadiusMeters ?? DEFAULT_FINISH_RADIUS_METERS);
           if (completedOrderedRoute && nearFinish && progressNow >= 99) {
             const state = warningStateRef.current["finish-line"] ?? { lastShown: 0, shown: false };
             if (!state.shown) {
@@ -1821,7 +1895,7 @@ export default function HomePage() {
               const finishPopup: WarningEvent = {
                 areaId: "finish-line",
                 areaName: "Garis Finish",
-                message: "Anda mendekati garis finish! Silakan tekan tombol 'Selesaikan Sesi' di bawah untuk menyimpan lari Anda.",
+                message: "Anda sudah berada di area finish. Tekan tombol 'Finish' untuk menyelesaikan dan menyimpan lari.",
                 type: "info",
                 distanceMeters: distanceToEnd,
                 timestamp: Date.now(),
@@ -1949,8 +2023,57 @@ export default function HomePage() {
   return (
     <main className={`track-shell ${isSheetCollapsed ? "sheet-collapsed" : ""}`}>
       <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-        {certificateStatus}
+        {achievementStatus}
       </span>
+
+      {sharedAchievement ? (
+        <section
+          className={`shared-achievement-card tier-${sharedAchievement.achievement.tier}`}
+          aria-labelledby="shared-achievement-title"
+          aria-describedby="shared-achievement-description"
+        >
+          <button
+            type="button"
+            className="shared-achievement-close"
+            onClick={closeSharedAchievement}
+            aria-label="Tutup achievement yang dibagikan"
+          >
+            <X size={18} aria-hidden="true" />
+          </button>
+          <div className="shared-achievement-icon">
+            <AchievementIcon name={sharedAchievement.achievement.icon} size={34} />
+          </div>
+          <div className="shared-achievement-copy">
+            <span className="shared-achievement-kicker">
+              Achievement {ACHIEVEMENT_TIER_LABELS[sharedAchievement.achievement.tier]}
+            </span>
+            <h2 id="shared-achievement-title">{sharedAchievement.achievement.title}</h2>
+            <p id="shared-achievement-description">
+              {sharedAchievement.runnerName || "Pelari Singapadu"} telah meraih achievement ini.
+            </p>
+          </div>
+          <div className="shared-achievement-stats" aria-label="Statistik achievement">
+            <span><strong>{sharedAchievement.completedRuns}</strong> run</span>
+            <span><strong>{formatDistance(sharedAchievement.totalDistanceMeters)}</strong> total</span>
+            <span>
+              <strong>
+                {sharedAchievement.bestPaceSecondsPerKm > 0
+                  ? formatPace(sharedAchievement.bestPaceSecondsPerKm / 60)
+                  : "--"}
+              </strong>
+              pace terbaik
+            </span>
+          </div>
+          <p className="shared-achievement-meta">
+            Diraih {new Intl.DateTimeFormat("id-ID", {
+              dateStyle: "long",
+              timeZone: "UTC",
+            }).format(new Date(sharedAchievement.achievedAt))}
+            {" · "}URL compact v{sharedAchievement.protocolVersion}
+          </p>
+        </section>
+      ) : null}
+
       {/* Hero: only visible on desktop */}
       <header className="hero">
         <div className="hero-copy">
@@ -2173,10 +2296,11 @@ export default function HomePage() {
               <button
                 className="btn-primary-action-finish"
                 onClick={isSimulating ? stopSimulation : finishSession}
-                title="Selesaikan sesi"
-                aria-label="Selesaikan sesi"
+                title="Finish"
+                aria-label="Finish dan simpan sesi"
               >
                 <Square size={18} fill="currentColor" />
+                <span>Finish</span>
               </button>
             ) : null}
 
@@ -2304,60 +2428,64 @@ export default function HomePage() {
               </div>
 
               {session.status === "finished" ? (
-                <section className="certificate-download-card" aria-labelledby="certificate-current-title">
-                  <div className="certificate-card-heading">
+                <section className="achievement-completion-card" aria-labelledby="achievement-current-title">
+                  <div className="achievement-completion-heading">
                     <Award size={24} aria-hidden="true" />
                     <div>
-                      <h2 id="certificate-current-title">Sertifikat Rute Selesai</h2>
-                      <p>Isi nama peserta, lalu unduh sertifikat PNG dari sesi ini.</p>
+                      <h2 id="achievement-current-title">Progress Achievement Diperbarui</h2>
+                      <p>
+                        {achievementSummary.completedRuns} run selesai · total{" "}
+                        {formatDistance(achievementSummary.totalDistanceMeters)}
+                      </p>
                     </div>
                   </div>
-                  <label htmlFor="certificate-name-current">Nama pada sertifikat</label>
-                  <input
-                    id="certificate-name-current"
-                    type="text"
-                    value={certificateName}
-                    maxLength={60}
-                    autoComplete="name"
-                    onChange={(event) => updateCertificateName(event.target.value)}
-                    onBlur={persistCertificateName}
-                    aria-invalid={Boolean(certificateNameError)}
-                    aria-describedby={certificateNameError ? "certificate-name-current-error" : "certificate-current-help"}
-                  />
-                  <span id="certificate-current-help" className="certificate-field-help">
-                    Nama hanya disimpan pada browser perangkat ini.
-                  </span>
-                  {certificateNameError ? (
-                    <span id="certificate-name-current-error" className="certificate-field-error" role="alert">
-                      {certificateNameError}
-                    </span>
-                  ) : null}
-                  <div className="certificate-action-row">
+
+                  {latestUnlockedAchievement ? (
+                    <div className={`achievement-latest tier-${latestUnlockedAchievement.definition.tier}`}>
+                      <span className="achievement-latest-icon">
+                        <AchievementIcon name={latestUnlockedAchievement.definition.icon} size={26} />
+                      </span>
+                      <span>
+                        <small>Achievement terbaru</small>
+                        <strong>{latestUnlockedAchievement.definition.title}</strong>
+                      </span>
+                    </div>
+                  ) : (
+                    <p className="achievement-completion-note">
+                      Selesaikan run pertama untuk membuka achievement.
+                    </p>
+                  )}
+
+                  <div className="achievement-completion-actions">
+                    {latestUnlockedAchievement ? (
+                      <button
+                        type="button"
+                        className="btn-achievement-share"
+                        onClick={() => onShareAchievement(latestUnlockedAchievement)}
+                        disabled={sharingAchievementId === latestUnlockedAchievement.definition.id}
+                      >
+                        {sharingAchievementId === latestUnlockedAchievement.definition.id ? (
+                          <Loader2 size={18} className="animate-spin" aria-hidden="true" />
+                        ) : (
+                          <Share2 size={18} aria-hidden="true" />
+                        )}
+                        <span>
+                          {sharingAchievementId === latestUnlockedAchievement.definition.id
+                            ? "Menyiapkan..."
+                            : "Bagikan"}
+                        </span>
+                      </button>
+                    ) : null}
                     <button
                       type="button"
-                      className="btn-certificate-download"
-                      onClick={() => onDownloadCertificate(session)}
-                      disabled={!track || downloadingCertificateId === session.sessionId || sharingCertificateId === session.sessionId}
+                      className="btn-achievement-view"
+                      onClick={() => {
+                        setActiveTab("history");
+                        setIsSheetCollapsed(false);
+                      }}
                     >
-                      {downloadingCertificateId === session.sessionId ? (
-                        <Loader2 size={18} className="animate-spin" aria-hidden="true" />
-                      ) : (
-                        <Download size={18} aria-hidden="true" />
-                      )}
-                      <span>{downloadingCertificateId === session.sessionId ? "Membuat..." : "Unduh PNG"}</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-certificate-share"
-                      onClick={() => onShareCertificate(session)}
-                      disabled={!track || sharingCertificateId === session.sessionId || downloadingCertificateId === session.sessionId}
-                    >
-                      {sharingCertificateId === session.sessionId ? (
-                        <Loader2 size={18} className="animate-spin" aria-hidden="true" />
-                      ) : (
-                        <Share2 size={18} aria-hidden="true" />
-                      )}
-                      <span>{sharingCertificateId === session.sessionId ? "Menyiapkan..." : "Bagikan"}</span>
+                      <Trophy size={18} aria-hidden="true" />
+                      <span>Lihat Semua</span>
                     </button>
                   </div>
                 </section>
@@ -2413,30 +2541,115 @@ export default function HomePage() {
             {/* 3. RUN HISTORY SECTION */}
             <div className={`panel-section section-history ${activeTab === "history" ? "mobile-active" : "mobile-hidden"}`}>
               <div className="panel-section-title">Riwayat Sesi</div>
-              {sessionHistory.some((entry) => entry.status === "finished") ? (
-                <div className="certificate-history-profile">
-                  <label htmlFor="certificate-name-history">Nama pada sertifikat</label>
-                  <input
-                    id="certificate-name-history"
-                    type="text"
-                    value={certificateName}
-                    maxLength={60}
-                    autoComplete="name"
-                    onChange={(event) => updateCertificateName(event.target.value)}
-                    onBlur={persistCertificateName}
-                    aria-invalid={Boolean(certificateNameError)}
-                    aria-describedby={certificateNameError ? "certificate-name-history-error" : "certificate-history-help"}
-                  />
-                  <span id="certificate-history-help" className="certificate-field-help">
-                    Digunakan untuk sertifikat sesi selesai di bawah ini.
-                  </span>
-                  {certificateNameError ? (
-                    <span id="certificate-name-history-error" className="certificate-field-error" role="alert">
-                      {certificateNameError}
-                    </span>
-                  ) : null}
+              <section className="achievement-showcase" aria-labelledby="achievement-showcase-title">
+                <div className="achievement-showcase-heading">
+                  <div>
+                    <span className="achievement-eyebrow">Koleksi lokal</span>
+                    <h2 id="achievement-showcase-title">Achievement</h2>
+                    <p>
+                      {unlockedAchievements.length} dari {achievementProgress.length} terbuka
+                    </p>
+                  </div>
+                  <Trophy size={28} aria-hidden="true" />
                 </div>
-              ) : null}
+
+                <div className="achievement-summary-grid" aria-label="Ringkasan achievement">
+                  <div>
+                    <strong>{achievementSummary.completedRuns}</strong>
+                    <span>Run selesai</span>
+                  </div>
+                  <div>
+                    <strong>{formatDistance(achievementSummary.totalDistanceMeters)}</strong>
+                    <span>Total jarak</span>
+                  </div>
+                </div>
+
+                <div className="achievement-profile">
+                  <label htmlFor="achievement-runner-name">Nama pelari <span>(opsional)</span></label>
+                  <input
+                    id="achievement-runner-name"
+                    type="text"
+                    value={runnerName}
+                    maxLength={40}
+                    autoComplete="name"
+                    onChange={(event) => updateRunnerName(event.target.value)}
+                    onBlur={persistRunnerName}
+                    aria-describedby="achievement-runner-help"
+                  />
+                  <span id="achievement-runner-help" className="achievement-field-help">
+                    Nama ikut dimasukkan ke tautan share. Kosongkan untuk membagikan secara anonim.
+                  </span>
+                </div>
+
+                <div className="achievement-grid">
+                  {achievementProgress.map((entry) => {
+                    const definition = entry.definition;
+                    const unlockedDate = entry.unlockedAt
+                      ? new Date(entry.unlockedAt).toLocaleDateString("id-ID")
+                      : null;
+                    const isSharing = sharingAchievementId === definition.id;
+
+                    return (
+                      <article
+                        key={definition.id}
+                        className={`achievement-card tier-${definition.tier} ${entry.unlocked ? "unlocked" : "locked"}`}
+                      >
+                        <div className="achievement-card-top">
+                          <span className="achievement-card-icon">
+                            <AchievementIcon name={definition.icon} size={28} />
+                          </span>
+                          <span className="achievement-tier">
+                            {ACHIEVEMENT_TIER_LABELS[definition.tier]}
+                          </span>
+                        </div>
+                        <h3>{definition.title}</h3>
+                        <p>{definition.description}</p>
+                        <div
+                          className="achievement-progress"
+                          role="progressbar"
+                          aria-label={`Progres ${definition.title}`}
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          aria-valuenow={Math.round(entry.progressPercent)}
+                        >
+                          <span style={{ width: `${entry.progressPercent}%` }} />
+                        </div>
+                        <span className="achievement-progress-label">{entry.progressLabel}</span>
+
+                        {entry.unlocked ? (
+                          <div className="achievement-card-footer">
+                            <span className="achievement-unlocked-label">
+                              <Medal size={14} aria-hidden="true" />
+                              Terbuka {unlockedDate}
+                            </span>
+                            <button
+                              type="button"
+                              className="btn-achievement-card-share"
+                              onClick={() => onShareAchievement(entry)}
+                              disabled={isSharing}
+                              aria-label={`Bagikan achievement ${definition.title}`}
+                            >
+                              {isSharing ? (
+                                <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+                              ) : (
+                                <Share2 size={16} aria-hidden="true" />
+                              )}
+                              <span>{isSharing ? "Menyiapkan" : "Bagikan"}</span>
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="achievement-locked-label">
+                            <LockKeyhole size={14} aria-hidden="true" />
+                            Terkunci
+                          </span>
+                        )}
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+
+              <h2 className="run-history-title">Riwayat Run</h2>
               <div className="history-list">
                 {sessionHistory.length === 0 ? (
                   <div className="empty-state">
@@ -2473,38 +2686,6 @@ export default function HomePage() {
                             <strong>{formatPace(entry.averagePacePerKm)}</strong>
                           </div>
                         </div>
-                        {entry.status === "finished" ? (
-                          <div className="history-certificate-actions">
-                            <button
-                              type="button"
-                              className="btn-history-certificate"
-                              onClick={() => onDownloadCertificate(entry)}
-                              disabled={!track || downloadingCertificateId === entry.sessionId || sharingCertificateId === entry.sessionId}
-                              aria-label={`Unduh sertifikat sesi ${endLabel}`}
-                            >
-                              {downloadingCertificateId === entry.sessionId ? (
-                                <Loader2 size={15} className="animate-spin" aria-hidden="true" />
-                              ) : (
-                                <Download size={15} aria-hidden="true" />
-                              )}
-                              <span>{downloadingCertificateId === entry.sessionId ? "Membuat..." : "Unduh"}</span>
-                            </button>
-                            <button
-                              type="button"
-                              className="btn-history-share"
-                              onClick={() => onShareCertificate(entry)}
-                              disabled={!track || sharingCertificateId === entry.sessionId || downloadingCertificateId === entry.sessionId}
-                              aria-label={`Bagikan sertifikat sesi ${endLabel}`}
-                            >
-                              {sharingCertificateId === entry.sessionId ? (
-                                <Loader2 size={15} className="animate-spin" aria-hidden="true" />
-                              ) : (
-                                <Share2 size={15} aria-hidden="true" />
-                              )}
-                              <span>{sharingCertificateId === entry.sessionId ? "Menyiapkan..." : "Bagikan"}</span>
-                            </button>
-                          </div>
-                        ) : null}
                       </div>
                     );
                   })
@@ -2579,6 +2760,9 @@ export default function HomePage() {
               </div>
             </div>
 
+            <footer className="app-copyright">
+              &copy; 2026 KKN PPM PNB Singapadu Tengah
+            </footer>
           </div>
         </aside>
       </section>

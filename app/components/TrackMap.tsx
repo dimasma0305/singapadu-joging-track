@@ -184,6 +184,9 @@ export default function TrackMap({
   const isLoop = useMemo(() => {
     return haversineMeters(track.startAt, track.endAt) < 35;
   }, [track.startAt, track.endAt]);
+  const startRadiusMeters = Math.max(1, track.startRadiusMeters ?? 50);
+  const finishRadiusMeters = Math.max(1, track.endFinishRadiusMeters ?? 50);
+  const showFinishArea = progressPercent >= 75;
 
   const currentTrackCenter: [number, number] = [
     track.startAt.lat,
@@ -269,24 +272,68 @@ export default function TrackMap({
       {/* Start & Finish Points */}
       {isLoop ? (
         // For loop track: show single marker starting as START and transitioning to FINISH at 75% progress
-        <Marker
-          position={[track.startAt.lat, track.startAt.lng]}
-          icon={
-            progressPercent >= 75
-              ? createBadgeIcon("FINISH", "#ef4444", true)
-              : createBadgeIcon("START", "#10b981", false)
-          }
-        />
+        <>
+          <Circle
+            center={[track.startAt.lat, track.startAt.lng]}
+            radius={showFinishArea ? finishRadiusMeters : startRadiusMeters}
+            interactive={false}
+            pathOptions={{
+              color: showFinishArea ? "#ef4444" : "#10b981",
+              fillColor: showFinishArea ? "#ef4444" : "#10b981",
+              fillOpacity: 0.1,
+              weight: 2,
+              opacity: 0.85,
+              dashArray: "8, 8",
+              className: showFinishArea ? "finish-area-circle" : "start-area-circle",
+            }}
+          />
+          <Marker
+            position={[track.startAt.lat, track.startAt.lng]}
+            icon={
+              showFinishArea
+                ? createBadgeIcon("FINISH", "#ef4444", true)
+                : createBadgeIcon("START", "#10b981", false)
+            }
+          />
+        </>
       ) : (
         // For point-to-point track: show START at startAt, and at endAt show START at first, changing to FINISH at 50%
         <>
+          <Circle
+            center={[track.startAt.lat, track.startAt.lng]}
+            radius={startRadiusMeters}
+            interactive={false}
+            pathOptions={{
+              color: "#10b981",
+              fillColor: "#10b981",
+              fillOpacity: 0.1,
+              weight: 2,
+              opacity: 0.85,
+              dashArray: "8, 8",
+              className: "start-area-circle",
+            }}
+          />
           <Marker
             position={[track.startAt.lat, track.startAt.lng]}
             icon={createBadgeIcon("START", "#10b981", false)}
           />
+          <Circle
+            center={[track.endAt.lat, track.endAt.lng]}
+            radius={finishRadiusMeters}
+            interactive={false}
+            pathOptions={{
+              color: "#ef4444",
+              fillColor: "#ef4444",
+              fillOpacity: 0.1,
+              weight: 2,
+              opacity: 0.85,
+              dashArray: "8, 8",
+              className: "finish-area-circle",
+            }}
+          />
           <Marker
             position={[track.endAt.lat, track.endAt.lng]}
-            icon={createBadgeIcon("FINISH", "#ef4444", progressPercent >= 75)}
+            icon={createBadgeIcon("FINISH", "#ef4444", showFinishArea)}
           />
         </>
       )}

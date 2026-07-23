@@ -6,6 +6,8 @@ Aplikasi web untuk single-QR jogging track:
 - tracking real-time posisi
 - progress & pace
 - area warning berbasis jarak (info/warning/critical)
+- achievement lokal berdasarkan jumlah run, total jarak, dan pace
+- share achievement melalui URL ringkas tanpa backend
 
 ## Menjalankan
 
@@ -31,6 +33,14 @@ Buka: `http://localhost:3000/?track=main`
 - `app/page.tsx` → halaman utama + engine tracking
 - `app/components/TrackMap.tsx` → visualisasi Leaflet
 - `app/lib/track-utils.ts` → kalkulasi geospasial dasar
+- `app/lib/achievement-utils.ts` → milestone achievement dan protokol URL share
+
+## Tautan achievement
+
+Achievement dibagikan melalui fragmen URL `#a=<token>`. Token memakai protokol
+biner versi 1, varint, kuantisasi jarak 10 meter/tanggal satu hari, checksum
+CRC-16, dan Base64URL tanpa padding. Fragmen tidak dikirim ke server dan dapat
+dibaca sepenuhnya di browser penerima.
 
 ## Deploy ke domain `joging.1pc.tf` (Traefik)
 

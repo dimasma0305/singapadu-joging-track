@@ -6,8 +6,8 @@
       "properties": {
         "id": "main",
         "name": "Singapadu Jogging Loop",
-        "startRadiusMeters": 20,
-        "endFinishRadiusMeters": 30,
+        "startRadiusMeters": 50,
+        "endFinishRadiusMeters": 50,
         "offRouteThresholdMeters": 20,
         "checkpoints": [
           {
