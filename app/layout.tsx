@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Space_Grotesk } from "next/font/google";
 import "./globals.css";
 
@@ -10,6 +10,14 @@ const appFont = Space_Grotesk({
 export const metadata: Metadata = {
   title: "Joging Track",
   description: "Single-QR jogging tracking web app with Leaflet.",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#07111f",
+  colorScheme: "dark",
 };
 
 export default function RootLayout({

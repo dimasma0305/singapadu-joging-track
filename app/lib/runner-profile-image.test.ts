@@ -35,14 +35,14 @@ describe("runner profile social artwork", () => {
         longestRunMeters: 2_580,
         latestRunAt: Date.UTC(2026, 6, 23),
       },
-      trackName: "Singapadu Jogging Loop",
+      trackName: "Singapadu Tengah Run Track",
       profileUrl: "https://example.com/#p=profile",
       routePoints,
     });
 
     expect(svg).toContain('width="1080"');
     expect(svg).toContain('height="1350"');
-    expect(svg).toContain("Singapadu Jogging");
+    expect(svg).toContain("Singapadu Tengah Run Track");
     expect(svg).toContain("Ringkasan lari");
     expect(svg).toContain('stroke="#fc5200"');
     expect(svg).toContain("58.50");

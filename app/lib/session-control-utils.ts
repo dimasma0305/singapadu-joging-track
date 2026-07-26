@@ -1,10 +1,10 @@
-import type { RunSession } from "./types";
+import { calculateActiveDurationSeconds } from "./track-utils";
+import type { RunSession, SessionSample } from "./types";
 
 export type PrimarySessionMode =
   | "start"
   | "pause"
   | "resume"
-  | "finish"
   | "stop";
 
 export type PrimarySessionControl = {
@@ -12,23 +12,61 @@ export type PrimarySessionControl = {
   label: string;
 };
 
+export const completeSessionAtPosition = ({
+  session,
+  endedAt,
+  position,
+}: {
+  session: RunSession;
+  endedAt: number;
+  position: SessionSample | null;
+}): RunSession => {
+  const totalPausedMilliseconds =
+    session.totalPausedMilliseconds +
+    (session.pausedAt ? Math.max(0, endedAt - session.pausedAt) : 0);
+  const durationSeconds = calculateActiveDurationSeconds({
+    startedAt: session.startedAt,
+    currentTimestamp: endedAt,
+    totalPausedMilliseconds,
+  });
+  const averagePacePerKm =
+    session.distanceMeters > 0 && durationSeconds > 0
+      ? Number(
+          (
+            durationSeconds /
+            60 /
+            (session.distanceMeters / 1000)
+          ).toFixed(2)
+        )
+      : 0;
+
+  return {
+    ...session,
+    status: "finished",
+    endedAt,
+    pausedAt: null,
+    totalPausedMilliseconds,
+    durationSeconds,
+    averagePacePerKm,
+    finishPosition: position
+      ? {
+          ...position,
+          routeProgressMeters: session.routeProgressMeters,
+        }
+      : null,
+    persisted: false,
+  };
+};
+
 export const resolvePrimarySessionControl = ({
   status,
-  isFinishReady,
   isTesting,
 }: {
   status: RunSession["status"];
-  isFinishReady: boolean;
   isTesting: boolean;
 }): PrimarySessionControl => {
   if (isTesting) {
     return { mode: "stop", label: "Hentikan Pengujian" };
-  }
-  if (
-    isFinishReady &&
-    (status === "running" || status === "paused")
-  ) {
-    return { mode: "finish", label: "Finish" };
   }
   if (status === "running") {
     return { mode: "pause", label: "Jeda Sesi" };

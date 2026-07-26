@@ -1,10 +1,39 @@
-import type { RunSession, WarningEvent } from "./types";
+import type { RunSession, SessionSample, WarningEvent } from "./types";
 
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
 
 const isNonNegativeNumber = (value: unknown): value is number =>
   isFiniteNumber(value) && value >= 0;
+
+const normalizeStoredFinishPosition = (
+  value: unknown,
+  fallbackTimestamp: number
+): SessionSample | null => {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+
+  const position = value as Partial<SessionSample>;
+  if (!isFiniteNumber(position.lat) || !isFiniteNumber(position.lng)) {
+    return null;
+  }
+
+  return {
+    lat: position.lat,
+    lng: position.lng,
+    accuracy:
+      position.accuracy === null || isFiniteNumber(position.accuracy)
+        ? position.accuracy
+        : null,
+    routeProgressMeters: isNonNegativeNumber(position.routeProgressMeters)
+      ? position.routeProgressMeters
+      : undefined,
+    timestamp: isFiniteNumber(position.timestamp)
+      ? position.timestamp
+      : fallbackTimestamp,
+  };
+};
 
 const getSessionHistoryTimestamp = (session: RunSession): number =>
   session.status === "paused"
@@ -59,6 +88,12 @@ const normalizeStoredSession = (value: unknown): RunSession | null => {
     routeProgressMeters: isNonNegativeNumber(session.routeProgressMeters)
       ? session.routeProgressMeters
       : session.distanceMeters,
+    finishPosition: normalizeStoredFinishPosition(
+      session.finishPosition,
+      isFinished && isFiniteNumber(session.endedAt)
+        ? session.endedAt
+        : session.startedAt
+    ),
     // The history screen only needs the summary. Omitting GPS samples keeps
     // localStorage small enough to retain multiple session snapshots reliably.
     samples: [],

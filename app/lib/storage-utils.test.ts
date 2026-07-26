@@ -23,6 +23,13 @@ const createFinishedSession = (
   maxPacePerKm: 1,
   closestIndex: 8,
   routeProgressMeters: 1_000,
+  finishPosition: {
+    lat: -6.2,
+    lng: 106.8,
+    accuracy: 8,
+    routeProgressMeters: 1_000,
+    timestamp: endedAt,
+  },
   samples: [{ lat: -6.2, lng: 106.8, timestamp: endedAt }],
   persisted: false,
 });
@@ -65,6 +72,7 @@ describe("run session history storage", () => {
 
     expect(history.map((session) => session.sessionId)).toEqual(["latest", "older"]);
     expect(history[0].samples).toEqual([]);
+    expect(history[0].finishPosition).toEqual(latest.finishPosition);
     expect(history[0].persisted).toBe(true);
   });
 

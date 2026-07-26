@@ -3,7 +3,13 @@
 import fallbackTrackPayload from "../public/track.json";
 
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import type L from "leaflet";
 import {
   Play,
@@ -56,7 +62,7 @@ import type {
 } from "./lib/types";
 import {
   cumulativeDistanceFromWaypoints,
-  advanceSequentialRouteProgress,
+  advanceContinuousRouteProgress,
   calculateActiveDurationSeconds,
   calculateRollingPacePerKm,
   createSessionId,
@@ -94,7 +100,10 @@ import {
   buildRunnerProfileRouteGeometry,
   shareRunnerProfilePng,
 } from "./lib/runner-profile-image";
-import { resolvePrimarySessionControl } from "./lib/session-control-utils";
+import {
+  completeSessionAtPosition,
+  resolvePrimarySessionControl,
+} from "./lib/session-control-utils";
 import {
   buildFunctionalTestHistoryUpdate,
   createCompletedFunctionalTestSession,
@@ -116,6 +125,7 @@ type ToastMessage = {
   warningAreaId?: string;
   autoHideMs?: number;
 };
+type SheetTab = "metrics" | "warnings" | "history" | "settings";
 
 type FunctionalTestId =
   | "track-config"
@@ -126,6 +136,7 @@ type FunctionalTestId =
   | "progress-metrics"
   | "pause-resume"
   | "warning-engine"
+  | "multi-lap-loop"
   | "finish-flow"
   | "achievement-engine";
 type FunctionalTestStatus = "pending" | "running" | "passed" | "failed" | "skipped";
@@ -146,7 +157,8 @@ const FUNCTIONAL_TEST_CASES: ReadonlyArray<Pick<FunctionalTestResult, "id" | "la
   { id: "progress-metrics", label: "Progress, jarak & pace" },
   { id: "pause-resume", label: "Pause & resume" },
   { id: "warning-engine", label: "Geofence & warning toast" },
-  { id: "finish-flow", label: "Area finish & penyelesaian" },
+  { id: "multi-lap-loop", label: "Loop lebih dari satu lap" },
+  { id: "finish-flow", label: "Selesai di posisi saat ini" },
   { id: "achievement-engine", label: "Achievement & statistik" },
 ];
 
@@ -168,6 +180,8 @@ const PUBLIC_BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 const TRACK_FILE = `${PUBLIC_BASE_PATH}/track.json`;
 const DEFAULT_START_RADIUS_METERS = 50;
 const DEFAULT_FINISH_RADIUS_METERS = 50;
+const FUNCTIONAL_TEST_TARGET_LAPS = 2;
+const FUNCTIONAL_TEST_INTERVAL_MILLISECONDS = 250;
 const MAX_START_GPS_STALE_AGE_MS = 8_000;
 const START_POSITION_TIMEOUT_MS = 5000;
 const START_POSITION_MAX_AGE_MS = 5_000;
@@ -268,7 +282,7 @@ const RunnerProfileCard = ({
           <Activity size={20} aria-hidden="true" />
         </span>
         <div>
-          <span className="run-summary-kicker">Singapadu Jogging</span>
+          <span className="run-summary-kicker">Singapadu Tengah Jogging</span>
           <strong>{runnerName || "Pelari Singapadu"}</strong>
           <small>{trackName}</small>
         </div>
@@ -410,6 +424,7 @@ const createIdleSession = (trackId: string): RunSession => ({
   maxPacePerKm: 0,
   closestIndex: 0,
   routeProgressMeters: 0,
+  finishPosition: null,
   samples: [],
   persisted: false,
 });
@@ -538,7 +553,7 @@ const normalizeTrackPayload = (payload: unknown, fallbackTrackId: string): Track
   if (!payload || typeof payload !== "object") {
     return {
       id: fallbackTrackId,
-      name: "Main Jogging Route",
+      name: "Singapadu Tengah Run Track",
       distanceMeters: 0,
       waypoints: [],
       checkpoints: [],
@@ -570,7 +585,7 @@ const normalizeTrackPayload = (payload: unknown, fallbackTrackId: string): Track
       ? raw.name
       : isString(geojsonProps.name)
         ? geojsonProps.name
-        : "Main Jogging Route",
+        : "Singapadu Tengah Run Track",
     distanceMeters: isNumber(raw.distanceMeters) ? raw.distanceMeters : 0,
     waypoints: geojsonWaypoints.length > 0 ? geojsonWaypoints : legacyWaypoints,
     checkpoints: parseTrackCheckpoints(checkpointSource),
@@ -644,8 +659,8 @@ export default function HomePage() {
   const [gpsHealth, setGpsHealth] = useState<GpsHealthState>("unknown");
 
   // Tab & Sheet State
-  const [activeTab, setActiveTab] = useState<"metrics" | "warnings" | "history" | "settings">("metrics");
-  const [isSheetCollapsed, setIsSheetCollapsed] = useState(false);
+  const [activeTab, setActiveTab] = useState<SheetTab>("metrics");
+  const [isSheetCollapsed, setIsSheetCollapsed] = useState(true);
 
   // User Settings State
   const [useSoundAndHaptic, setUseSoundAndHaptic] = useState(true);
@@ -672,6 +687,8 @@ export default function HomePage() {
   const isSimulatingRef = useRef(isSimulating);
   const isSheetCollapsedRef = useRef(isSheetCollapsed);
   const sheetCollapsedBeforeBlockingOverlayRef = useRef<boolean | null>(null);
+  const sheetDragStartYRef = useRef<number | null>(null);
+  const suppressSheetHandleClickRef = useRef(false);
   const lastLocationErrorToastRef = useRef<string | null>(null);
   const lastWarningToastRef = useRef<string | null>(null);
   
@@ -753,6 +770,16 @@ export default function HomePage() {
     return resolveTrackDistance(track);
   }, [track]);
 
+  const isLoopTrack = useMemo(
+    () =>
+      Boolean(
+        track &&
+          haversineMeters(track.startAt, track.endAt) <=
+            LOOP_END_AT_START_MAX_DISTANCE_METERS
+      ),
+    [track]
+  );
+
   const displayClosestIndex = useMemo(() => {
     if (!track || track.waypoints.length === 0) {
       return 0;
@@ -770,18 +797,73 @@ export default function HomePage() {
     return session.distanceMeters;
   }, [session.distanceMeters, session.status]);
 
-  const progress = useMemo(() => {
-    if (session.status === "idle" || !track || cumulativeDistances.length === 0 || trackDistance <= 0) {
-      return 0;
+  const routeCycle = useMemo(() => {
+    if (
+      session.status === "idle" ||
+      !track ||
+      cumulativeDistances.length === 0 ||
+      trackDistance <= 0
+    ) {
+      return {
+        completedLaps: 0,
+        currentLapNumber: 1,
+        lapProgressMeters: 0,
+      };
     }
-    const fallbackProgress = cumulativeDistances[
-      Math.min(displayClosestIndex, cumulativeDistances.length - 1)
-    ] ?? 0;
-    const routeProgressMeters = Number.isFinite(session.routeProgressMeters)
-      ? session.routeProgressMeters
+
+    const fallbackProgress =
+      cumulativeDistances[
+        Math.min(displayClosestIndex, cumulativeDistances.length - 1)
+      ] ?? 0;
+    const totalProgressMeters = Number.isFinite(session.routeProgressMeters)
+      ? Math.max(0, session.routeProgressMeters)
       : fallbackProgress;
-    return Math.min(100, Math.max(0, (routeProgressMeters / trackDistance) * 100));
-  }, [displayClosestIndex, session.routeProgressMeters, session.status, cumulativeDistances, trackDistance, track]);
+
+    if (!isLoopTrack) {
+      return {
+        completedLaps: totalProgressMeters >= trackDistance ? 1 : 0,
+        currentLapNumber: 1,
+        lapProgressMeters: Math.min(trackDistance, totalProgressMeters),
+      };
+    }
+
+    const completedLaps = Math.floor(totalProgressMeters / trackDistance);
+    const currentLapProgress =
+      totalProgressMeters - completedLaps * trackDistance;
+    const finishedAtLapBoundary =
+      session.status === "finished" &&
+      totalProgressMeters > 0 &&
+      currentLapProgress <= 0.01;
+
+    return {
+      completedLaps,
+      currentLapNumber: finishedAtLapBoundary
+        ? Math.max(1, completedLaps)
+        : completedLaps + 1,
+      lapProgressMeters: finishedAtLapBoundary
+        ? trackDistance
+        : currentLapProgress,
+    };
+  }, [
+    cumulativeDistances,
+    displayClosestIndex,
+    isLoopTrack,
+    session.routeProgressMeters,
+    session.status,
+    track,
+    trackDistance,
+  ]);
+
+  const progress = useMemo(
+    () =>
+      trackDistance > 0
+        ? Math.min(
+            100,
+            Math.max(0, (routeCycle.lapProgressMeters / trackDistance) * 100)
+          )
+        : 0,
+    [routeCycle.lapProgressMeters, trackDistance]
+  );
 
   const remainingDistance = useMemo(() => {
     if (!track) {
@@ -790,52 +872,12 @@ export default function HomePage() {
     if (session.status === "idle") {
       return trackDistance;
     }
-    const routeProgressMeters = Number.isFinite(session.routeProgressMeters)
-      ? session.routeProgressMeters
-      : 0;
-    return Math.max(0, trackDistance - routeProgressMeters);
-  }, [session.routeProgressMeters, session.status, trackDistance, track]);
-
-  const isFinishReady = useMemo(() => {
-    if (
-      !track ||
-      (session.status !== "running" && session.status !== "paused") ||
-      track.waypoints.length === 0 ||
-      trackDistance <= 0
-    ) {
-      return false;
-    }
-
-    const finalWaypointIndex = track.waypoints.length - 1;
-    const currentPosition =
-      lastPosition ?? session.samples[session.samples.length - 1] ?? null;
-    if (!currentPosition) {
-      return false;
-    }
-
-    const routeProgressMeters = Number.isFinite(session.routeProgressMeters)
-      ? session.routeProgressMeters
-      : cumulativeDistances[
-          Math.min(session.closestIndex, cumulativeDistances.length - 1)
-        ] ?? 0;
-    const completionPercent = (routeProgressMeters / trackDistance) * 100;
-    const distanceToFinish = haversineMeters(currentPosition, track.endAt);
-
-    return (
-      session.closestIndex >= finalWaypointIndex &&
-      completionPercent >= 99 &&
-      distanceToFinish <=
-        (track.endFinishRadiusMeters ?? DEFAULT_FINISH_RADIUS_METERS)
-    );
+    return Math.max(0, trackDistance - routeCycle.lapProgressMeters);
   }, [
-    cumulativeDistances,
-    lastPosition,
-    session.closestIndex,
-    session.routeProgressMeters,
-    session.samples,
+    routeCycle.lapProgressMeters,
     session.status,
-    track,
     trackDistance,
+    track,
   ]);
 
   const nextWaypointDistance = useMemo(() => {
@@ -1596,56 +1638,16 @@ export default function HomePage() {
       return;
     }
 
-    if (track && !isSimulatingRef.current) {
-      const finalWaypointIndex = Math.max(0, track.waypoints.length - 1);
-      const routeProgressMeters = Number.isFinite(current.routeProgressMeters)
-        ? current.routeProgressMeters
-        : cumulativeDistances[Math.min(current.closestIndex, cumulativeDistances.length - 1)] ?? 0;
-      const completionPercent = trackDistance > 0
-        ? Math.min(100, Math.max(0, (routeProgressMeters / trackDistance) * 100))
-        : 0;
-      const currentPosition = lastPositionRef.current ?? current.samples[current.samples.length - 1] ?? null;
-      const distanceToFinish = currentPosition
-        ? haversineMeters(currentPosition, track.endAt)
-        : Number.POSITIVE_INFINITY;
-      const finishRadius = track.endFinishRadiusMeters ?? DEFAULT_FINISH_RADIUS_METERS;
-      const hasCompletedOrderedRoute =
-        current.closestIndex >= finalWaypointIndex && completionPercent >= 99;
-      const isNearFinish = distanceToFinish <= finishRadius;
-
-      if (!hasCompletedOrderedRoute || !isNearFinish) {
-        const message = !hasCompletedOrderedRoute
-          ? `Rute baru selesai ${Math.floor(completionPercent)}%. Ikuti garis menuju checkpoint berikutnya sebelum kembali ke finish.`
-          : `Anda masih ${Math.round(distanceToFinish)}m dari titik finish. Masuk ke radius finish ${finishRadius}m untuk menyelesaikan sesi.`;
-        showStartBlockDialog("Rute Belum Selesai", message);
-        return;
-      }
-    }
-
     const now = Date.now();
-    const totalPausedMilliseconds =
-      current.totalPausedMilliseconds +
-      (current.pausedAt ? Math.max(0, now - current.pausedAt) : 0);
-    const duration = calculateActiveDurationSeconds({
-      startedAt: current.startedAt,
-      currentTimestamp: now,
-      totalPausedMilliseconds,
-    });
-    const average =
-      current.distanceMeters > 0 && duration > 0
-        ? Number((duration / 60 / (current.distanceMeters / 1000)).toFixed(2))
-        : 0;
-
-    applySession({
-      ...current,
-      status: "finished",
-      endedAt: now,
-      pausedAt: null,
-      totalPausedMilliseconds,
-      durationSeconds: duration,
-      averagePacePerKm: average,
-      persisted: false,
-    });
+    const latestPosition =
+      lastPositionRef.current ?? current.samples[current.samples.length - 1] ?? null;
+    applySession(
+      completeSessionAtPosition({
+        session: current,
+        endedAt: now,
+        position: latestPosition,
+      })
+    );
     setActiveTab("metrics");
     setIsSheetCollapsed(false);
     resetProgressTracking();
@@ -1901,19 +1903,47 @@ export default function HomePage() {
     applySession(completedSession);
 
     const finalPosition = completedSession.samples.at(-1);
+    const savedFinishPosition = completedSession.finishPosition;
     const distanceToFinish = finalPosition
       ? haversineMeters(finalPosition, track.endAt)
       : Number.POSITIVE_INFINITY;
-    const reachedFinish =
-      completedSession.closestIndex >= track.waypoints.length - 1 &&
-      completedSession.routeProgressMeters >= trackDistance * 0.99 &&
-      distanceToFinish <= (track.endFinishRadiusMeters ?? DEFAULT_FINISH_RADIUS_METERS);
+    const finishRadiusMeters =
+      track.endFinishRadiusMeters ?? DEFAULT_FINISH_RADIUS_METERS;
+    const completedRequiredLaps =
+      completedSession.routeProgressMeters >=
+      trackDistance * FUNCTIONAL_TEST_TARGET_LAPS;
+    const continuedAfterRequiredLaps =
+      completedSession.routeProgressMeters >
+      trackDistance * FUNCTIONAL_TEST_TARGET_LAPS;
+    const savedLatestPosition =
+      finalPosition && savedFinishPosition
+        ? haversineMeters(finalPosition, savedFinishPosition) <= 1
+        : false;
+    const finishedAwayFromOfficialFinish =
+      distanceToFinish > finishRadiusMeters;
+    const multiLapWorks =
+      current.status === "running" &&
+      completedRequiredLaps &&
+      continuedAfterRequiredLaps;
+    updateFunctionalTestResult(
+      "multi-lap-loop",
+      multiLapWorks ? "passed" : "failed",
+      multiLapWorks
+        ? `${FUNCTIONAL_TEST_TARGET_LAPS} lap penuh tercapai dan sesi tetap berjalan memasuki lap ${FUNCTIONAL_TEST_TARGET_LAPS + 1}.`
+        : `Sesi tidak berhasil melanjutkan progres setelah ${FUNCTIONAL_TEST_TARGET_LAPS} lap.`
+    );
+    const manualFinishWorks =
+      completedSession.status === "finished" &&
+      Boolean(completedSession.endedAt) &&
+      completedRequiredLaps &&
+      savedLatestPosition &&
+      finishedAwayFromOfficialFinish;
     updateFunctionalTestResult(
       "finish-flow",
-      reachedFinish ? "passed" : "failed",
-      reachedFinish
-        ? `Finish terdeteksi dalam radius ${track.endFinishRadiusMeters ?? DEFAULT_FINISH_RADIUS_METERS} m.`
-        : "Simulasi tidak memenuhi syarat finish."
+      manualFinishWorks ? "passed" : "failed",
+      manualFinishWorks
+        ? `Sesi selesai manual ${Math.round(distanceToFinish)} m dari checkpoint finish dan posisi terakhir tersimpan.`
+        : "Penyelesaian manual atau penyimpanan posisi terakhir gagal."
     );
 
     const simulatedAchievements = buildAchievementProgress([completedSession]);
@@ -2166,7 +2196,16 @@ export default function HomePage() {
     updateFunctionalTestResult("progress-metrics", "running", "Menunggu pergerakan rute.");
     updateFunctionalTestResult("pause-resume", "running", "Dijadwalkan pada sepertiga rute.");
     updateFunctionalTestResult("warning-engine", "running", "Menunggu zona uji.");
-    updateFunctionalTestResult("finish-flow", "running", "Menunggu waypoint terakhir.");
+    updateFunctionalTestResult(
+      "multi-lap-loop",
+      "running",
+      `Menunggu lap pertama dan progres menuju lap ${FUNCTIONAL_TEST_TARGET_LAPS}.`
+    );
+    updateFunctionalTestResult(
+      "finish-flow",
+      "running",
+      `Menunggu ${FUNCTIONAL_TEST_TARGET_LAPS} lap selesai sebelum berhenti di luar checkpoint finish.`
+    );
     updateFunctionalTestResult("achievement-engine", "running", "Menunggu sesi selesai.");
 
     const pauseIndex = Math.max(2, Math.floor(track.waypoints.length / 3));
@@ -2183,13 +2222,28 @@ export default function HomePage() {
         updateFunctionalTestResult("map-render", "passed", "Peta Leaflet aktif.");
       }
 
-      const idx = simIndexRef.current;
       const waypoints = track.waypoints;
-      if (idx >= waypoints.length) {
+      const sampleIndex = simIndexRef.current;
+      const maximumSimulationSamples =
+        waypoints.length +
+        FUNCTIONAL_TEST_TARGET_LAPS * Math.max(1, waypoints.length - 1);
+
+      if (sampleIndex >= maximumSimulationSamples) {
+        updateFunctionalTestResult(
+          "multi-lap-loop",
+          "failed",
+          `Progres tidak mencapai ${FUNCTIONAL_TEST_TARGET_LAPS} lap dalam batas simulasi.`
+        );
         finishFunctionalTest(sessionRef.current);
         return;
       }
 
+      const idx =
+        sampleIndex < waypoints.length
+          ? sampleIndex
+          : 1 +
+            ((sampleIndex - waypoints.length) %
+              Math.max(1, waypoints.length - 1));
       const point = waypoints[idx];
       const sample: SessionSample = {
         lat: point.lat,
@@ -2199,8 +2253,23 @@ export default function HomePage() {
       };
       const current = sessionRef.current;
       const previous = current.samples.at(-1);
-      const distanceMeters =
-        current.distanceMeters + (previous ? haversineMeters(previous, sample) : 0);
+      const configuredCorridor = track.offRouteThresholdMeters ?? 20;
+      const simulatedSampleJumpMeters = previous
+        ? haversineMeters(previous, sample) + configuredCorridor + 5
+        : 80;
+      const routeProgressResult = advanceContinuousRouteProgress({
+        point: sample,
+        previousPoint: previous,
+        waypoints,
+        cumulativeDistances,
+        currentWaypointIndex: maxProgressWaypointIndexRef.current,
+        currentTotalProgressMeters: current.routeProgressMeters,
+        reachRadiusMeters: Math.max(12, configuredCorridor),
+        routeCorridorMeters: configuredCorridor,
+        maxSampleJumpMeters: Math.max(80, simulatedSampleJumpMeters),
+        isLoop: isLoopTrack,
+      });
+      const distanceMeters = routeProgressResult.routeProgressMeters;
       const durationSeconds = Math.max(
         0,
         calculateActiveDurationSeconds({
@@ -2217,15 +2286,14 @@ export default function HomePage() {
         pace > 0 && (current.maxPacePerKm <= 0 || pace < current.maxPacePerKm)
           ? pace
           : current.maxPacePerKm;
-      const routeProgressMeters =
-        cumulativeDistances[Math.min(idx, cumulativeDistances.length - 1)] ?? 0;
+      const routeProgressMeters = routeProgressResult.routeProgressMeters;
       const next: RunSession = {
         ...current,
         distanceMeters,
         durationSeconds,
         averagePacePerKm: pace,
         maxPacePerKm: maxPace,
-        closestIndex: idx,
+        closestIndex: routeProgressResult.waypointIndex,
         routeProgressMeters,
         samples: [...current.samples.slice(-299), { ...sample, routeProgressMeters }],
         status: "running",
@@ -2235,7 +2303,7 @@ export default function HomePage() {
       applySession(next);
       setLastPosition(sample);
       lastPositionRef.current = sample;
-      maxProgressWaypointIndexRef.current = idx;
+      maxProgressWaypointIndexRef.current = routeProgressResult.waypointIndex;
 
       const syntheticWarning: WarningArea = {
         id: "functional-test-zone",
@@ -2284,12 +2352,32 @@ export default function HomePage() {
         return;
       }
 
-      if (idx === waypoints.length - 1) {
+      if (
+        routeProgressResult.completedLaps >= 1 &&
+        routeProgressMeters > trackDistance &&
+        functionalTestResultsRef.current.find(
+          (result) => result.id === "multi-lap-loop"
+        )?.status !== "passed"
+      ) {
+        updateFunctionalTestResult(
+          "multi-lap-loop",
+          "passed",
+          `Lap pertama tidak menghentikan sesi; progres berlanjut hingga lap ${routeProgressResult.completedLaps + 1}.`
+        );
+      }
+
+      const reachedTargetLaps =
+        routeProgressResult.completedLaps >= FUNCTIONAL_TEST_TARGET_LAPS;
+      const continuedAfterTarget =
+        routeProgressMeters >
+        trackDistance * FUNCTIONAL_TEST_TARGET_LAPS;
+
+      if (reachedTargetLaps && continuedAfterTarget) {
         finishFunctionalTest(next);
       } else {
         simIndexRef.current += 1;
       }
-    }, 500);
+    }, FUNCTIONAL_TEST_INTERVAL_MILLISECONDS);
 
     simIntervalRef.current = interval;
   };
@@ -2496,16 +2584,24 @@ export default function HomePage() {
           12,
           Math.min(30, Math.max(configuredCorridor, sampleAccuracy + 5))
         );
-        const routeProgressResult = advanceSequentialRouteProgress({
+        const completedLapsBefore =
+          isLoopTrack && trackDistance > 0
+            ? Math.floor(
+                currentAfterValidation.routeProgressMeters / trackDistance
+              )
+            : 0;
+        const routeProgressResult = advanceContinuousRouteProgress({
           point: sample,
           previousPoint: previous,
           waypoints: track.waypoints,
           cumulativeDistances,
           currentWaypointIndex: maxProgressWaypointIndexRef.current,
-          currentProgressMeters: currentAfterValidation.routeProgressMeters,
+          currentTotalProgressMeters:
+            currentAfterValidation.routeProgressMeters,
           reachRadiusMeters,
           routeCorridorMeters: Math.max(configuredCorridor, Math.min(sampleAccuracy + 8, 35)),
           maxSampleJumpMeters,
+          isLoop: isLoopTrack,
         });
         const progressWaypointIndex = routeProgressResult.waypointIndex;
         const distanceMeters = routeProgressResult.routeProgressMeters;
@@ -2558,37 +2654,28 @@ export default function HomePage() {
           progressWaypointIndex
         );
 
-        if (track.endAt) {
+        if (
+          isLoopTrack &&
+          routeProgressResult.completedLaps > completedLapsBefore
+        ) {
           const distanceToEnd = haversineMeters(sample, track.endAt);
-          const progressNow =
-            trackDistance > 0
-              ? (routeProgressResult.routeProgressMeters / trackDistance) * 100
-              : 0;
-          const completedOrderedRoute = progressWaypointIndex >= track.waypoints.length - 1;
-          const nearFinish =
-            distanceToEnd <= (track.endFinishRadiusMeters ?? DEFAULT_FINISH_RADIUS_METERS);
-          if (completedOrderedRoute && nearFinish && progressNow >= 99) {
-            const state = warningStateRef.current["finish-line"] ?? { lastShown: 0, shown: false };
-            if (!state.shown) {
-              warningStateRef.current["finish-line"] = { lastShown: Date.now(), shown: true };
-              
-              const finishPopup: WarningEvent = {
-                areaId: "finish-line",
-                areaName: "Garis Finish",
-                message: "Anda sudah berada di area finish. Tombol utama kini berubah menjadi 'Finish'. Tekan untuk menyimpan lari.",
-                type: "info",
-                distanceMeters: distanceToEnd,
-                timestamp: Date.now(),
-              };
-              setWarningPopup(finishPopup);
-              setActiveWarningId("finish-line");
-              setWarningLog((prev) => [finishPopup, ...prev].slice(0, 15));
-              
-              if (useSoundAndHapticRef.current) {
-                playWarningSound("info");
-                triggerVibrate("info");
-              }
-            }
+          const completedLap = routeProgressResult.completedLaps;
+          const finishPopup: WarningEvent = {
+            areaId: `lap-${completedLap}`,
+            areaName: `Putaran ${completedLap} Selesai`,
+            message:
+              "Tracking tetap berjalan. Jarak akan terus bertambah selama Anda mengikuti lintasan, atau tekan Selesai kapan pun.",
+            type: "info",
+            distanceMeters: distanceToEnd,
+            timestamp: Date.now(),
+          };
+          setWarningPopup(finishPopup);
+          setActiveWarningId("finish-line");
+          setWarningLog((prev) => [finishPopup, ...prev].slice(0, 15));
+
+          if (useSoundAndHapticRef.current) {
+            playWarningSound("info");
+            triggerVibrate("info");
           }
         }
       },
@@ -2605,7 +2692,14 @@ export default function HomePage() {
     return () => {
       navigator.geolocation.clearWatch(id);
     };
-  }, [track, cumulativeDistances, trackDistance, isSimulating, permissionStatus]);
+  }, [
+    track,
+    cumulativeDistances,
+    trackDistance,
+    isLoopTrack,
+    isSimulating,
+    permissionStatus,
+  ]);
 
   // Persist paused snapshots and completed sessions in local history.
   useEffect(() => {
@@ -2653,7 +2747,24 @@ export default function HomePage() {
 
     if (target) {
       if (mapRef.current) {
-        mapRef.current.setView([target.lat, target.lng], 18, { animate: true });
+        const map = mapRef.current;
+        const targetPosition: [number, number] = [target.lat, target.lng];
+        const isMobileViewport = window.matchMedia("(max-width: 900px)").matches;
+        const sheetHeight = isMobileViewport
+          ? document.querySelector<HTMLElement>(".control-panel")?.getBoundingClientRect().height ?? 0
+          : 0;
+
+        map.setView(targetPosition, 18, { animate: false });
+        if (sheetHeight > 0) {
+          const mapSize = map.getSize();
+          const adjustedCenter = map.containerPointToLatLng([
+            mapSize.x / 2,
+            mapSize.y / 2 + sheetHeight / 2,
+          ]);
+          map.setView(adjustedCenter, 18, { animate: true });
+        } else {
+          map.setView(targetPosition, 18, { animate: true });
+        }
       }
       return;
     }
@@ -2693,25 +2804,73 @@ export default function HomePage() {
     }
 
     const routeBounds = track.waypoints.map((point) => [point.lat, point.lng] as [number, number]);
+    const isMobileViewport = window.matchMedia("(max-width: 900px)").matches;
+    const sheetHeight = isMobileViewport
+      ? document.querySelector<HTMLElement>(".control-panel")?.getBoundingClientRect().height ?? 0
+      : 0;
+
     mapRef.current.fitBounds(routeBounds, {
-      padding: [40, 40],
+      paddingTopLeft: [36, 72],
+      paddingBottomRight: [36, Math.max(36, sheetHeight + 28)],
       maxZoom: 18,
     });
   };
 
+  const selectSheetTab = (tab: SheetTab) => {
+    setActiveTab(tab);
+    setIsSheetCollapsed(false);
+  };
+
+  const onSheetHandlePointerDown = (
+    event: ReactPointerEvent<HTMLButtonElement>
+  ) => {
+    sheetDragStartYRef.current = event.clientY;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const onSheetHandlePointerUp = (
+    event: ReactPointerEvent<HTMLButtonElement>
+  ) => {
+    const startY = sheetDragStartYRef.current;
+    sheetDragStartYRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    if (startY === null) {
+      return;
+    }
+
+    const dragDistance = event.clientY - startY;
+    if (Math.abs(dragDistance) < 36) {
+      return;
+    }
+
+    suppressSheetHandleClickRef.current = true;
+    setIsSheetCollapsed(dragDistance > 0);
+    window.setTimeout(() => {
+      suppressSheetHandleClickRef.current = false;
+    }, 0);
+  };
+
+  const onSheetHandleClick = () => {
+    if (suppressSheetHandleClickRef.current) {
+      return;
+    }
+    setIsSheetCollapsed((current) => !current);
+  };
+
   const primarySessionControl = resolvePrimarySessionControl({
     status: session.status,
-    isFinishReady,
     isTesting: isSimulating,
   });
+  const canFinishSession =
+    !isSimulating &&
+    (session.status === "running" || session.status === "paused");
 
   const onPrimarySessionAction = () => {
     if (isSimulating) {
       stopSimulation();
-      return;
-    }
-    if (isFinishReady) {
-      finishSession();
       return;
     }
     if (sessionRef.current.status === "running") {
@@ -2728,6 +2887,31 @@ export default function HomePage() {
   const mapWarningAreas = track?.warningAreas ?? [];
   const pageReady = !loadingTrack && track;
   const activeToast = showPermissionSheet || startBlockInfo ? null : toastQueue[0] ?? null;
+  const mapStatusLabel =
+    session.status === "running"
+      ? "Sedang berlari"
+      : session.status === "paused"
+        ? "Sesi dijeda"
+        : session.status === "finished"
+          ? "Sesi selesai"
+          : "Siap berlari";
+  const mapStatusHint =
+    session.status === "idle"
+      ? isLoopTrack
+        ? "Lintasan siap"
+        : `${formatDistance(trackDistance)} total`
+      : isLoopTrack
+        ? `Lap ${routeCycle.currentLapNumber}${
+            session.status === "running" && etaRemainingSeconds !== null
+              ? ` · ${formatDuration(etaRemainingSeconds)}`
+              : ""
+          }`
+        : session.status === "running" && etaRemainingSeconds !== null
+          ? `ETA ${formatDuration(etaRemainingSeconds)}`
+          : nextWaypointDistance !== null
+            ? `${formatDistance(nextWaypointDistance)} ke CP`
+            : `${formatDistance(trackDistance)} total`;
+  const compactPace = formatPace(session.averagePacePerKm).replace(" /km", "");
 
   return (
     <main className={`track-shell ${isSheetCollapsed ? "sheet-collapsed" : ""}`}>
@@ -2752,7 +2936,7 @@ export default function HomePage() {
           </button>
           <RunnerProfileCard
             runnerName={sharedAchievementCollection.runnerName}
-            trackName={track?.name ?? "Singapadu Jogging Track"}
+            trackName={track?.name ?? "Singapadu Tengah Run Track"}
             achievements={sharedAchievementCollection.achievements}
             completedRuns={sharedAchievementCollection.completedRuns}
             totalDistanceMeters={sharedAchievementCollection.totalDistanceMeters}
@@ -2764,7 +2948,7 @@ export default function HomePage() {
             routePoints={track?.waypoints ?? []}
           />
           <p className="shared-run-summary-note">
-            Dibagikan dari Singapadu Jogging.
+            Dibagikan dari Singapadu Tengah Jogging.
           </p>
         </section>
       ) : null}
@@ -2796,8 +2980,8 @@ export default function HomePage() {
         <section className="map-stage">
           <div className={`track-map-wrapper theme-${mapTheme}`}>
                 {!pageReady ? (
-                  <div className="map-placeholder">
-                    <Loader2 className="animate-spin" size={32} />
+                  <div className="map-placeholder" role="status" aria-live="polite">
+                    <Loader2 className="animate-spin" size={32} aria-hidden="true" />
                     <span>{loadingTrack ? "Loading route..." : "Gagal memuat rute."}</span>
                   </div>
                 ) : (
@@ -2810,6 +2994,11 @@ export default function HomePage() {
                   followUser={followUser}
                   activeWarningId={activeWarningId}
                   warningAreas={mapWarningAreas}
+                  sessionFinishPosition={
+                    session.status === "finished"
+                      ? session.finishPosition
+                      : null
+                  }
                   mapTheme={mapTheme}
                   isSheetCollapsed={isSheetCollapsed}
                   onMapReady={(instance) => {
@@ -2820,6 +3009,36 @@ export default function HomePage() {
                   }}
                 />
 
+                <div
+                  className="map-status-card"
+                  aria-label={`${mapStatusLabel}. ${routeCycle.completedLaps} lap selesai. Saat ini lap ${routeCycle.currentLapNumber}. Jarak total ${formatDistance(displayedDistance)}. Pace ${compactPace}. ${mapStatusHint}.`}
+                >
+                  <div className="map-status-heading">
+                    <span>
+                      <i className={`status-dot ${statusTone} ${isSimulating ? "simulating" : ""}`} />
+                      {mapStatusLabel}
+                    </span>
+                    <strong>{mapStatusHint}</strong>
+                  </div>
+                  <div className="map-status-metrics">
+                    <span>
+                      <strong>{routeCycle.completedLaps}</strong>
+                      <small>Lap selesai</small>
+                    </span>
+                    <span>
+                      <strong>{formatDistance(displayedDistance)}</strong>
+                      <small>Jarak</small>
+                    </span>
+                    <span>
+                      <strong>{compactPace}</strong>
+                      <small>Pace /km</small>
+                    </span>
+                  </div>
+                  <span className="map-status-progress" aria-hidden="true">
+                    <span style={{ width: `${progress}%` }} />
+                  </span>
+                </div>
+
                 {/* Floating GPS & Route Control Overlay on Map */}
                 <div className="map-actions-overlay">
                   <button 
@@ -2827,32 +3046,41 @@ export default function HomePage() {
                     className={`overlay-fab ${followUser ? "active" : ""}`} 
                     onClick={onRecenter} 
                     title="Fokus Posisi Saya"
+                    aria-label="Pusatkan peta ke posisi saya"
+                    aria-pressed={followUser}
                   >
-                    <Locate size={20} />
+                    <Locate size={20} aria-hidden="true" />
                   </button>
                   <button 
                     type="button" 
                     className="overlay-fab" 
                     onClick={onFitRoute} 
                     title="Lihat Seluruh Rute"
+                    aria-label="Tampilkan seluruh rute"
                   >
-                    <Map size={20} />
+                    <Map size={20} aria-hidden="true" />
                   </button>
                   <button 
                     type="button" 
                     className="overlay-fab theme-toggle" 
                     onClick={toggleMapTheme} 
                     title={mapTheme === "dark" ? "Mode Terang Peta" : "Mode Gelap Peta"}
+                    aria-label={mapTheme === "dark" ? "Gunakan peta terang" : "Gunakan peta gelap"}
                   >
-                    {mapTheme === "dark" ? <Sun size={20} /> : <Moon size={20} />}
+                    {mapTheme === "dark"
+                      ? <Sun size={20} aria-hidden="true" />
+                      : <Moon size={20} aria-hidden="true" />}
                   </button>
                 </div>
 
                 <div className="map-toast-stack">
                   {showPermissionSheet ? (
-                    <div className="location-permission-sheet">
+                    <section
+                      className="location-permission-sheet"
+                      aria-labelledby="location-permission-title"
+                    >
                       <div className="location-permission-content">
-                        <h3>Izin Lokasi Diperlukan</h3>
+                        <h3 id="location-permission-title">Izin Lokasi Diperlukan</h3>
                         <p>{locationPermissionMessage}</p>
                         <button
                           type="button"
@@ -2870,11 +3098,14 @@ export default function HomePage() {
                           Nanti Saja
                         </button>
                       </div>
-                    </div>
+                    </section>
                   ) : startBlockInfo ? (
-                    <div className="location-permission-sheet">
+                    <section
+                      className="location-permission-sheet"
+                      aria-labelledby="start-block-title"
+                    >
                       <div className="location-permission-content">
-                        <h3>{startBlockInfo.title}</h3>
+                        <h3 id="start-block-title">{startBlockInfo.title}</h3>
                         <p>{startBlockInfo.message}</p>
                         <button
                           type="button"
@@ -2894,16 +3125,26 @@ export default function HomePage() {
                           Mengerti
                         </button>
                       </div>
-                    </div>
+                    </section>
                   ) : null}
 
                   {activeToast ? (
-                    <div className={`map-warning-toast ${activeToast.severity}`}>
+                    <div
+                      className={`map-warning-toast ${activeToast.severity}`}
+                      role={activeToast.severity === "critical" || activeToast.severity === "error" ? "alert" : "status"}
+                      aria-live={activeToast.severity === "critical" || activeToast.severity === "error" ? "assertive" : "polite"}
+                      aria-atomic="true"
+                    >
                       <div className="toast-header">
-                        <AlertTriangle size={18} className="toast-icon-svg" />
+                        <AlertTriangle size={18} className="toast-icon-svg" aria-hidden="true" />
                         <strong>{activeToast.title}</strong>
-                        <button className="toast-close" onClick={popToast}>
-                          <X size={16} />
+                        <button
+                          type="button"
+                          className="toast-close"
+                          onClick={popToast}
+                          aria-label="Tutup notifikasi"
+                        >
+                          <X size={16} aria-hidden="true" />
                         </button>
                       </div>
                       <div className="toast-body">{activeToast.message}</div>
@@ -2945,24 +3186,31 @@ export default function HomePage() {
         {/* Aside Panel / Mobile Bottom Sheet */}
         <aside className={`control-panel ${isSheetCollapsed ? "collapsed" : "expanded"}`}>
           {/* Sheet drag/click handle on Mobile */}
-          <div 
-            className="sheet-handle-container" 
-            onClick={() => setIsSheetCollapsed(!isSheetCollapsed)}
-            role="button"
-            aria-label={isSheetCollapsed ? "Buka panel metrik" : "Tutup panel metrik"}
+          <button
+            type="button"
+            className="sheet-handle-container"
+            onClick={onSheetHandleClick}
+            onPointerDown={onSheetHandlePointerDown}
+            onPointerUp={onSheetHandlePointerUp}
+            onPointerCancel={() => {
+              sheetDragStartYRef.current = null;
+            }}
+            aria-expanded={!isSheetCollapsed}
+            aria-controls="session-panel-content"
+            aria-label={isSheetCollapsed ? "Buka detail sesi" : "Tutup detail sesi"}
           >
-            <div className="sheet-handle" />
-            <div className="sheet-mini-info">
-              <span className={`status-dot ${statusTone} ${isSimulating ? "simulating" : ""}`} />
+            <span className="sheet-handle" aria-hidden="true" />
+            <span className="sheet-mini-info">
+              <span className={`status-dot ${statusTone} ${isSimulating ? "simulating" : ""}`} aria-hidden="true" />
               <span className="mini-track-name">{track?.name ?? "Jogging Route"}</span>
               <span className="mini-stat">{formatDistance(displayedDistance)}</span>
               <span className="mini-stat-sep">•</span>
               <span className="mini-stat">{formatDuration(session.durationSeconds)}</span>
-              <span className="mini-chevron">
-                {isSheetCollapsed ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              <span className="mini-chevron" aria-hidden="true">
+                {isSheetCollapsed ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
               </span>
-            </div>
-          </div>
+            </span>
+          </button>
 
           {/* Quick Primary Actions at the top of bottom sheet - always visible when expanded */}
           <div className="panel-primary-actions">
@@ -2974,66 +3222,97 @@ export default function HomePage() {
               aria-label={primarySessionControl.label}
             >
               {primarySessionControl.mode === "pause" ? (
-                <Pause size={20} fill="currentColor" />
-              ) : primarySessionControl.mode === "finish" ? (
-                <Flag size={20} fill="currentColor" />
+                <Pause size={20} fill="currentColor" aria-hidden="true" />
               ) : primarySessionControl.mode === "stop" ? (
                 <X size={20} aria-hidden="true" />
               ) : (
-                <Play size={20} fill="currentColor" />
+                <Play size={20} fill="currentColor" aria-hidden="true" />
               )}
               <span>{primarySessionControl.label}</span>
             </button>
 
-            <button className="btn-primary-action-recenter" onClick={onRecenter} title="Pusatkan GPS" aria-label="Pusatkan GPS">
-              <Locate size={18} />
+            {canFinishSession ? (
+              <button
+                type="button"
+                className="btn-session-finish"
+                onClick={finishSession}
+                aria-label="Selesaikan sesi di posisi saat ini"
+                title="Selesaikan dan simpan titik GPS saat ini"
+              >
+                <Flag size={18} aria-hidden="true" />
+                <span>Selesai</span>
+              </button>
+            ) : null}
+
+            <button
+              type="button"
+              className="btn-primary-action-recenter"
+              onClick={onRecenter}
+              title="Pusatkan GPS"
+              aria-label="Pusatkan peta ke GPS"
+            >
+              <Locate size={20} aria-hidden="true" />
             </button>
           </div>
 
           {/* TAB SYSTEM FOR MOBILE - Hidden on Desktop */}
-          <div className="sheet-tabs">
+          <nav className="sheet-tabs" aria-label="Bagian panel sesi">
             <button 
+              type="button"
               className={`sheet-tab-btn ${activeTab === "metrics" ? "active" : ""}`}
-              onClick={() => { setActiveTab("metrics"); setIsSheetCollapsed(false); }}
+              onClick={() => selectSheetTab("metrics")}
+              aria-pressed={activeTab === "metrics"}
             >
-              <Activity size={16} />
+              <Activity size={18} aria-hidden="true" />
               <span>Metrik</span>
             </button>
             <button 
+              type="button"
               className={`sheet-tab-btn ${activeTab === "warnings" ? "active" : ""}`}
-              onClick={() => { setActiveTab("warnings"); setIsSheetCollapsed(false); }}
+              onClick={() => selectSheetTab("warnings")}
+              aria-pressed={activeTab === "warnings"}
+              aria-label={`Zona peringatan${warningLog.length > 0 ? `, ${warningLog.length} riwayat` : ""}`}
             >
-              <AlertTriangle size={16} />
-              <span>Peringatan</span>
+              <AlertTriangle size={18} aria-hidden="true" />
+              <span>Zona</span>
               {warningLog.length > 0 && <span className="tab-count">{warningLog.length}</span>}
             </button>
             <button 
+              type="button"
               className={`sheet-tab-btn ${activeTab === "history" ? "active" : ""}`}
-              onClick={() => { setActiveTab("history"); setIsSheetCollapsed(false); }}
+              onClick={() => selectSheetTab("history")}
+              aria-pressed={activeTab === "history"}
             >
-              <History size={16} />
+              <History size={18} aria-hidden="true" />
               <span>Riwayat</span>
             </button>
             <button 
+              type="button"
               className={`sheet-tab-btn ${activeTab === "settings" ? "active" : ""}`}
-              onClick={() => { setActiveTab("settings"); setIsSheetCollapsed(false); }}
+              onClick={() => selectSheetTab("settings")}
+              aria-pressed={activeTab === "settings"}
             >
-              <Settings size={16} />
+              <Settings size={18} aria-hidden="true" />
               <span>Setelan</span>
             </button>
-          </div>
+          </nav>
 
           {/* TAB CONTENTS - Desktop displays everything, Mobile renders activeTab */}
-          <div className="sheet-scrollable-content">
+          <div className="sheet-scrollable-content" id="session-panel-content">
             
             {/* 1. METRICS SECTION */}
             <div className={`panel-section section-metrics ${activeTab === "metrics" ? "mobile-active" : "mobile-hidden"}`}>
               <div className="panel-section-title">Metrik Live</div>
               
-              {/* Circular Progress & Pace Display */}
+              {/* Completed laps and total distance display */}
               <div className="metrics-dashboard">
                 <div className="dashboard-circular-progress">
-                  <svg className="progress-ring" viewBox="0 0 120 120">
+                  <svg
+                    className="progress-ring"
+                    viewBox="0 0 120 120"
+                    aria-hidden="true"
+                    focusable="false"
+                  >
                     <circle className="progress-ring-bg" cx="60" cy="60" r="52" />
                     <circle 
                       className="progress-ring-indicator" 
@@ -3044,15 +3323,14 @@ export default function HomePage() {
                     />
                   </svg>
                   <div className="progress-value-center">
-                    <span className="pct">{progress.toFixed(0)}%</span>
-                    <span className="lbl">Progress</span>
+                    <span className="lap-count">{routeCycle.completedLaps}</span>
+                    <span className="lbl">Lap selesai</span>
                   </div>
                 </div>
 
                 <div className="dashboard-main-stat">
                   <span className="lbl">Jarak Tempuh</span>
-                    <strong className="val glow-text">{formatDistance(displayedDistance)}</strong>
-                  <span className="lbl-sub">dari {formatDistance(trackDistance)}</span>
+                  <strong className="val glow-text">{formatDistance(displayedDistance)}</strong>
                 </div>
               </div>
 
@@ -3081,7 +3359,7 @@ export default function HomePage() {
                 <div className="metric">
                   <span className="metric-icon remain-icon"><Navigation size={20} /></span>
                   <div className="metric-body">
-                    <span>Sisa Rute</span>
+                    <span>{isLoopTrack ? "Sisa Putaran" : "Sisa Rute"}</span>
                     <strong>{formatDistance(remainingDistance)}</strong>
                   </div>
                 </div>
@@ -3229,7 +3507,7 @@ export default function HomePage() {
                 <div className="run-summary-share-block">
                   <RunnerProfileCard
                     runnerName=""
-                    trackName={track?.name ?? "Singapadu Jogging Track"}
+                    trackName={track?.name ?? "Singapadu Tengah Run Track"}
                     achievements={unlockedAchievements.map((entry) => entry.definition)}
                     completedRuns={achievementSummary.completedRuns}
                     totalDistanceMeters={achievementSummary.totalDistanceMeters}
@@ -3380,6 +3658,16 @@ export default function HomePage() {
                             <strong>{formatPace(entry.averagePacePerKm)}</strong>
                           </div>
                         </div>
+                        {entry.status === "finished" && entry.finishPosition ? (
+                          <div className="session-finish-location">
+                            <MapPin size={14} aria-hidden="true" />
+                            <span>
+                              Titik selesai{" "}
+                              {entry.finishPosition.lat.toFixed(5)},{" "}
+                              {entry.finishPosition.lng.toFixed(5)}
+                            </span>
+                          </div>
+                        ) : null}
                       </div>
                     );
                   })
@@ -3404,7 +3692,8 @@ export default function HomePage() {
                     <input 
                       type="checkbox" 
                       checked={useSoundAndHaptic} 
-                      onChange={toggleSoundAndHaptic} 
+                      onChange={toggleSoundAndHaptic}
+                      aria-label="Aktifkan suara dan getar peringatan"
                     />
                     <span className="toggle-slider"></span>
                   </label>
@@ -3420,7 +3709,7 @@ export default function HomePage() {
                     <div>
                       <strong>Uji Fungsional Otomatis</strong>
                       <p>
-                        Simulasikan satu run lengkap dan periksa fungsi utama aplikasi dalam sekitar 10 detik.
+                        Simulasikan dua lap penuh hingga memasuki lap ketiga dan periksa fungsi utama aplikasi dalam sekitar 10 detik.
                       </p>
                     </div>
                   </div>
@@ -3428,6 +3717,7 @@ export default function HomePage() {
                   <div className="functional-test-capabilities" aria-label="Cakupan keamanan pengujian">
                     <span><Database size={13} aria-hidden="true" /> Data uji terisolasi</span>
                     <span><Link2 size={13} aria-hidden="true" /> URL compact diuji</span>
+                    <span><RotateCcw size={13} aria-hidden="true" /> Multi-lap diuji</span>
                   </div>
 
                   <div className="functional-test-overview">
@@ -3511,8 +3801,9 @@ export default function HomePage() {
                     </button>
                   )}
                   <p className="functional-test-footnote">
-                    Sesi simulasi yang lulus dihitung sebagai satu run untuk memicu progress
-                    achievement. Warning sintetis tetap tidak disimpan.
+                    Simulasi melewati dua lap lalu selesai di luar checkpoint finish.
+                    Sesi yang lulus dihitung sebagai satu run untuk progress achievement;
+                    warning sintetis tetap tidak disimpan.
                   </p>
                 </div>
 
@@ -3524,6 +3815,7 @@ export default function HomePage() {
                     <span>Tindakan Data</span>
                   </strong>
                   <button 
+                    type="button"
                     className="btn-danger" 
                     onClick={() => {
                       if (confirm("Apakah Anda yakin ingin menghapus semua riwayat sesi lari lokal?")) {

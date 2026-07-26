@@ -213,6 +213,115 @@ export const advanceSequentialRouteProgress = ({
   };
 };
 
+type ContinuousRouteProgressOptions = Omit<
+  SequentialRouteProgressOptions,
+  "currentProgressMeters"
+> & {
+  currentTotalProgressMeters: number;
+  isLoop: boolean;
+};
+
+export const advanceContinuousRouteProgress = ({
+  point,
+  previousPoint,
+  waypoints,
+  cumulativeDistances,
+  currentWaypointIndex,
+  currentTotalProgressMeters,
+  reachRadiusMeters,
+  routeCorridorMeters,
+  maxSampleJumpMeters = 80,
+  isLoop,
+}: ContinuousRouteProgressOptions): {
+  waypointIndex: number;
+  routeProgressMeters: number;
+  lapProgressMeters: number;
+  completedLaps: number;
+  offRouteDistanceMeters: number;
+} => {
+  const lastIndex = Math.max(0, waypoints.length - 1);
+  const lapDistance = cumulativeDistances[lastIndex] ?? 0;
+  const safeTotalProgress = Math.max(0, currentTotalProgressMeters);
+
+  if (!isLoop || lapDistance <= 0 || waypoints.length < 2) {
+    const result = advanceSequentialRouteProgress({
+      point,
+      previousPoint,
+      waypoints,
+      cumulativeDistances,
+      currentWaypointIndex,
+      currentProgressMeters: Math.min(safeTotalProgress, lapDistance),
+      reachRadiusMeters,
+      routeCorridorMeters,
+      maxSampleJumpMeters,
+    });
+
+    return {
+      ...result,
+      lapProgressMeters: result.routeProgressMeters,
+      completedLaps:
+        lapDistance > 0 && result.routeProgressMeters >= lapDistance ? 1 : 0,
+    };
+  }
+
+  const completedLapsBefore = Math.floor(safeTotalProgress / lapDistance);
+  const completedDistanceBefore = completedLapsBefore * lapDistance;
+  const currentLapProgress = safeTotalProgress - completedDistanceBefore;
+  const isAtLapBoundary = currentLapProgress <= 0.01;
+  const currentLapWaypointIndex = isAtLapBoundary
+    ? 0
+    : Math.min(Math.max(0, currentWaypointIndex), lastIndex);
+
+  const currentLapResult = advanceSequentialRouteProgress({
+    point,
+    previousPoint,
+    waypoints,
+    cumulativeDistances,
+    currentWaypointIndex: currentLapWaypointIndex,
+    currentProgressMeters: isAtLapBoundary ? 0 : currentLapProgress,
+    reachRadiusMeters,
+    routeCorridorMeters,
+    maxSampleJumpMeters,
+  });
+
+  if (currentLapResult.routeProgressMeters < lapDistance) {
+    const totalProgress =
+      completedDistanceBefore + currentLapResult.routeProgressMeters;
+    return {
+      waypointIndex: currentLapResult.waypointIndex,
+      routeProgressMeters: totalProgress,
+      lapProgressMeters: currentLapResult.routeProgressMeters,
+      completedLaps: Math.floor(totalProgress / lapDistance),
+      offRouteDistanceMeters: currentLapResult.offRouteDistanceMeters,
+    };
+  }
+
+  // The route is a loop, so the final waypoint is also the next lap's start.
+  // Project the same GPS sample onto the first segment to avoid dropping the
+  // few meters covered between two location updates around the lap boundary.
+  const nextLapResult = advanceSequentialRouteProgress({
+    point,
+    previousPoint: waypoints[0],
+    waypoints,
+    cumulativeDistances,
+    currentWaypointIndex: 0,
+    currentProgressMeters: 0,
+    reachRadiusMeters,
+    routeCorridorMeters,
+    maxSampleJumpMeters,
+  });
+  const totalProgress =
+    completedDistanceBefore + lapDistance + nextLapResult.routeProgressMeters;
+
+  return {
+    waypointIndex: nextLapResult.waypointIndex,
+    routeProgressMeters: totalProgress,
+    lapProgressMeters: nextLapResult.routeProgressMeters,
+    completedLaps: Math.floor(totalProgress / lapDistance),
+    offRouteDistanceMeters: nextLapResult.offRouteDistanceMeters,
+  };
+};
+
 type RouteProgressPaceSample = {
   timestamp: number;
   routeProgressMeters?: number;

@@ -55,6 +55,7 @@ type TrackMapProps = {
   followUser: boolean;
   activeWarningId: string | null;
   warningAreas: WarningArea[];
+  sessionFinishPosition?: SessionSample | null;
   mapTheme?: "dark" | "light";
   isSheetCollapsed?: boolean;
   onMapReady?: (map: L.Map) => void;
@@ -68,6 +69,18 @@ type MapRuntimeProps = {
   isSheetCollapsed: boolean;
   onMapReady?: (map: L.Map) => void;
   onFollowChange?: (follow: boolean) => void;
+};
+
+const getMobileSheetOffset = (): number => {
+  if (
+    typeof window === "undefined" ||
+    !window.matchMedia("(max-width: 900px)").matches
+  ) {
+    return 0;
+  }
+
+  const sheet = document.querySelector<HTMLElement>(".control-panel");
+  return sheet ? sheet.getBoundingClientRect().height / 2 : 0;
 };
 
 function MapRuntime({
@@ -98,7 +111,7 @@ function MapRuntime({
       map.invalidateSize({ animate: false, pan: false });
       const [latitude, longitude] = latestTargetRef.current;
       const currentPoint = map.latLngToContainerPoint([latitude, longitude]);
-      const offsetY = isSheetCollapsed ? 0 : 64;
+      const offsetY = getMobileSheetOffset();
       const adjustedLatLng = map.containerPointToLatLng(
         L.point(currentPoint.x, currentPoint.y + offsetY)
       );
@@ -124,7 +137,7 @@ function MapRuntime({
 
     const isMobile = typeof window !== "undefined" && window.matchMedia("(max-width: 900px)").matches;
     const currentPoint = map.latLngToContainerPoint([userPosition.lat, userPosition.lng]);
-    const offsetY = isMobile && !isSheetCollapsed ? 64 : 0;
+    const offsetY = isMobile ? getMobileSheetOffset() : 0;
     const adjustedLatLng = map.containerPointToLatLng(
       L.point(currentPoint.x, currentPoint.y + offsetY)
     );
@@ -161,6 +174,7 @@ export default function TrackMap({
   followUser,
   activeWarningId,
   warningAreas,
+  sessionFinishPosition = null,
   mapTheme = "dark",
   isSheetCollapsed = false,
   onMapReady,
@@ -459,6 +473,24 @@ export default function TrackMap({
             icon={createUserBadge()}
           />
         </>
+      ) : null}
+
+      {sessionFinishPosition ? (
+        <Marker
+          position={[
+            sessionFinishPosition.lat,
+            sessionFinishPosition.lng,
+          ]}
+          icon={createBadgeIcon("SELESAI", "#e11d48", true)}
+          title="Titik akhir sesi"
+        >
+          <Popup>
+            <div className="checkpoint-popup-content">
+              <strong>Titik akhir sesi</strong>
+              <span>Lokasi saat tombol Selesai ditekan</span>
+            </div>
+          </Popup>
+        </Marker>
       ) : null}
     </MapContainer>
   );

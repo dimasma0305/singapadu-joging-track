@@ -63,6 +63,7 @@ export type RunSession = {
   maxPacePerKm: number;
   closestIndex: number;
   routeProgressMeters: number;
+  finishPosition: SessionSample | null;
   samples: SessionSample[];
   persisted: boolean;
 };

@@ -301,7 +301,7 @@ export const buildRunnerProfileSvg = ({
 
       <rect width="${ARTWORK_WIDTH}" height="${ARTWORK_HEIGHT}" fill="#fff"/>
       <rect x="72" y="54" width="6" height="112" fill="#fc5200"/>
-      <text x="100" y="78" class="eyebrow">Singapadu Jogging</text>
+      <text x="100" y="78" class="eyebrow">Singapadu Tengah Jogging</text>
       <text x="100" y="126" class="profile-name">${escapeXml(truncate(runnerName, 28))}</text>
       <text x="100" y="160" class="profile-track">${escapeXml(truncate(trackName, 48))}</text>
       <text x="1008" y="92" text-anchor="end" class="header-meta">${payload.completedRuns} lari selesai</text>

@@ -42,6 +42,7 @@ export const createCompletedFunctionalTestSession = (
     durationSeconds,
     averagePacePerKm: FUNCTIONAL_TEST_PACE_MINUTES_PER_KM,
     maxPacePerKm: FUNCTIONAL_TEST_PACE_MINUTES_PER_KM,
+    finishPosition: current.samples.at(-1) ?? current.finishPosition,
     persisted: true,
   };
 };

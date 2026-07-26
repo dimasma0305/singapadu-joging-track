@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  advanceContinuousRouteProgress,
   advanceSequentialRouteProgress,
   calculateActiveDurationSeconds,
   calculateRollingPacePerKm,
@@ -128,6 +129,94 @@ describe("sequential route progress", () => {
   test("accounts for GPS accuracy before confirming off-route distance", () => {
     expect(resolveConfirmedOffRouteDistanceMeters(42, 12)).toBe(30);
     expect(resolveConfirmedOffRouteDistanceMeters(10, 15)).toBe(0);
+  });
+
+  test("continues route-valid distance on the next lap of a loop", () => {
+    let previous = waypoints[0];
+    let waypointIndex = 0;
+    let routeProgressMeters = 0;
+
+    for (const point of waypoints.slice(1)) {
+      const result = advanceContinuousRouteProgress({
+        ...progressOptions,
+        point,
+        previousPoint: previous,
+        currentWaypointIndex: waypointIndex,
+        currentTotalProgressMeters: routeProgressMeters,
+        isLoop: true,
+        maxSampleJumpMeters: 400,
+      });
+      previous = point;
+      waypointIndex = result.waypointIndex;
+      routeProgressMeters = result.routeProgressMeters;
+    }
+
+    expect(routeProgressMeters).toBeCloseTo(cumulativeDistances.at(-1) ?? 0, 5);
+    expect(waypointIndex).toBe(0);
+
+    const nextLapPoint = interpolate(waypoints[0], waypoints[1], 0.5);
+    const nextLap = advanceContinuousRouteProgress({
+      ...progressOptions,
+      point: nextLapPoint,
+      previousPoint: waypoints[0],
+      currentWaypointIndex: waypointIndex,
+      currentTotalProgressMeters: routeProgressMeters,
+      isLoop: true,
+    });
+
+    expect(nextLap.completedLaps).toBe(1);
+    expect(nextLap.lapProgressMeters).toBeGreaterThan(0);
+    expect(nextLap.routeProgressMeters).toBeGreaterThan(
+      cumulativeDistances.at(-1) ?? 0
+    );
+  });
+
+  test("accumulates three complete laps without resetting total progress", () => {
+    const lapDistance = cumulativeDistances.at(-1) ?? 0;
+    let previous = waypoints[0];
+    let waypointIndex = 0;
+    let routeProgressMeters = 0;
+    let completedLaps = 0;
+
+    for (let lap = 0; lap < 3; lap += 1) {
+      for (const point of waypoints.slice(1)) {
+        const result = advanceContinuousRouteProgress({
+          ...progressOptions,
+          point,
+          previousPoint: previous,
+          currentWaypointIndex: waypointIndex,
+          currentTotalProgressMeters: routeProgressMeters,
+          isLoop: true,
+          maxSampleJumpMeters: 400,
+        });
+        previous = point;
+        waypointIndex = result.waypointIndex;
+        routeProgressMeters = result.routeProgressMeters;
+        completedLaps = result.completedLaps;
+      }
+    }
+
+    expect(completedLaps).toBe(3);
+    expect(routeProgressMeters).toBeCloseTo(lapDistance * 3, 5);
+    expect(waypointIndex).toBe(0);
+  });
+
+  test("does not add post-finish distance while outside the route corridor", () => {
+    const lapDistance = cumulativeDistances.at(-1) ?? 0;
+    const result = advanceContinuousRouteProgress({
+      ...progressOptions,
+      point: {
+        lat: waypoints[0].lat + 0.001,
+        lng: waypoints[0].lng + 0.001,
+      },
+      previousPoint: waypoints[0],
+      currentWaypointIndex: 0,
+      currentTotalProgressMeters: lapDistance,
+      isLoop: true,
+    });
+
+    expect(result.routeProgressMeters).toBeCloseTo(lapDistance, 5);
+    expect(result.lapProgressMeters).toBe(0);
   });
 });
 

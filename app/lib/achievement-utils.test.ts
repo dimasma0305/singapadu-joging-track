@@ -28,6 +28,7 @@ const createFinishedSession = (
   maxPacePerKm: 9.375,
   closestIndex: 8,
   routeProgressMeters: 3200,
+  finishPosition: null,
   samples: [],
   persisted: true,
   ...overrides,

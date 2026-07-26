@@ -22,6 +22,7 @@ const createFinishedSession = (
   maxPacePerKm: 8,
   closestIndex: 17,
   routeProgressMeters: 2_500,
+  finishPosition: null,
   samples: [],
   persisted: true,
 });
@@ -50,6 +51,7 @@ describe("functional test achievement history", () => {
     expect(completed.averagePacePerKm).toBe(8);
     expect(completed.maxPacePerKm).toBe(8);
     expect(completed.startedAt).toBe(endedAt - 1_200_000);
+    expect(completed.finishPosition).toBeNull();
   });
 
   test("records the first automatic test and unlocks the first-run badge", () => {

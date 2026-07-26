@@ -5,7 +5,7 @@
       "type": "Feature",
       "properties": {
         "id": "main",
-        "name": "Singapadu Jogging Loop",
+        "name": "Singapadu Tengah Run Track",
         "startRadiusMeters": 50,
         "endFinishRadiusMeters": 50,
         "offRouteThresholdMeters": 20,
