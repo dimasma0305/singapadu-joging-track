@@ -50,6 +50,8 @@ import {
   Database,
   Link2,
   ImageDown,
+  Bell,
+  BellOff,
 } from "lucide-react";
 import type {
   RunSession,
@@ -111,9 +113,21 @@ import {
   buildFunctionalTestHistoryUpdate,
   createCompletedFunctionalTestSession,
 } from "./lib/functional-test-utils";
+import {
+  buildLiveNotificationUpdateKey,
+  buildRunNotificationPayload,
+  findLatestCrossedCheckpoint,
+  type RunNotificationMetrics,
+  type RunNotificationPayload,
+} from "./lib/notification-utils";
 
 type GeolocationPermissionState = PermissionState | "unknown" | "unsupported";
 type GpsHealthState = "unknown" | "checking" | "ready" | "permission-denied" | "timeout" | "provider-off" | "error";
+type SystemNotificationPermission =
+  | NotificationPermission
+  | "checking"
+  | "unsupported"
+  | "error";
 type ToastSeverity = WarningArea["type"] | "error";
 type StartBlockReason = {
   title: string;
@@ -178,9 +192,15 @@ const TrackMapDynamic = dynamic(() => import("./components/TrackMap"), {
 
 const TRACK_KEY = "joging-track:session-history";
 const WARNING_LOG_KEY = "joging-track:warning-history";
+const SYSTEM_NOTIFICATIONS_KEY = "joging-track:system-notifications";
+const SYSTEM_NOTIFICATION_HINT_KEY = "joging-track:notification-hint-seen";
 const SESSION_HISTORY_LIMIT = 25;
 const PUBLIC_BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 const TRACK_FILE = `${PUBLIC_BASE_PATH}/track.json`;
+const SERVICE_WORKER_FILE = `${PUBLIC_BASE_PATH}/sw.js`;
+const APP_ROOT_PATH = `${PUBLIC_BASE_PATH || ""}/`;
+const NOTIFICATION_ICON_PATH = `${PUBLIC_BASE_PATH}/icons/icon-192.png`;
+const NOTIFICATION_BADGE_PATH = `${PUBLIC_BASE_PATH}/icons/badge-96.png`;
 const DEFAULT_START_RADIUS_METERS = 50;
 const DEFAULT_FINISH_RADIUS_METERS = 50;
 const FUNCTIONAL_TEST_TARGET_LAPS = 2;
@@ -667,6 +687,13 @@ export default function HomePage() {
 
   // User Settings State
   const [useSoundAndHaptic, setUseSoundAndHaptic] = useState(true);
+  const [useSystemNotifications, setUseSystemNotifications] = useState(false);
+  const [systemNotificationPermission, setSystemNotificationPermission] =
+    useState<SystemNotificationPermission>("checking");
+  const [
+    isRequestingSystemNotification,
+    setIsRequestingSystemNotification,
+  ] = useState(false);
   const [mapTheme, setMapTheme] = useState<"dark" | "light">("light");
   const [achievementStatus, setAchievementStatus] = useState("");
   const [isSharingRunnerProfile, setIsSharingRunnerProfile] = useState(false);
@@ -687,6 +714,10 @@ export default function HomePage() {
   const warningStateRef = useRef<Record<string, { lastShown: number; shown: boolean }>>({});
   const offRouteStateRef = useRef({ outside: false, lastShown: 0 });
   const useSoundAndHapticRef = useRef(useSoundAndHaptic);
+  const useSystemNotificationsRef = useRef(useSystemNotifications);
+  const notificationRegistrationRef =
+    useRef<ServiceWorkerRegistration | null>(null);
+  const lastLiveNotificationKeyRef = useRef<string | null>(null);
   const isSimulatingRef = useRef(isSimulating);
   const isSheetCollapsedRef = useRef(isSheetCollapsed);
   const sheetCollapsedBeforeBlockingOverlayRef = useRef<boolean | null>(null);
@@ -716,6 +747,10 @@ export default function HomePage() {
   useEffect(() => {
     useSoundAndHapticRef.current = useSoundAndHaptic;
   }, [useSoundAndHaptic]);
+
+  useEffect(() => {
+    useSystemNotificationsRef.current = useSystemNotifications;
+  }, [useSystemNotifications]);
 
   useEffect(() => {
     isSimulatingRef.current = isSimulating;
@@ -988,6 +1023,42 @@ export default function HomePage() {
     return "Aplikasi membutuhkan akses lokasi untuk menampilkan posisi Anda saat ini dan memungkinkan sesi lari dimulai.";
   }, [permissionStatus, gpsHealth]);
 
+  const systemNotificationHelp = useMemo(() => {
+    if (systemNotificationPermission === "checking") {
+      return "Memeriksa dukungan notifikasi pada browser...";
+    }
+    if (systemNotificationPermission === "unsupported") {
+      return isIosBrowser()
+        ? "Di iPhone: pilih Bagikan → Tambahkan ke Layar Utama, lalu buka app dari ikon agar notifikasi sistem tersedia."
+        : "Browser ini belum mendukung notifikasi sistem untuk aplikasi web.";
+    }
+    if (systemNotificationPermission === "denied") {
+      return "Notifikasi diblokir. Izinkan kembali melalui pengaturan situs atau pengaturan notifikasi perangkat.";
+    }
+    if (systemNotificationPermission === "error") {
+      return "Layanan notifikasi belum siap. Periksa koneksi HTTPS lalu muat ulang aplikasi.";
+    }
+    if (useSystemNotifications) {
+      return "Status lari, checkpoint, lap, dan peringatan akan tampil di panel notifikasi. Biarkan sesi tetap terbuka agar update GPS terus diterima.";
+    }
+    return "Aktifkan agar metrik sesi dan peringatan dapat dicek tanpa terus melihat layar aplikasi.";
+  }, [systemNotificationPermission, useSystemNotifications]);
+
+  const systemNotificationActionLabel =
+    isRequestingSystemNotification
+      ? "Meminta izin..."
+      : useSystemNotifications
+        ? "Aktif"
+        : systemNotificationPermission === "denied"
+          ? "Diblokir"
+          : systemNotificationPermission === "unsupported"
+            ? isIosBrowser()
+              ? "Cara Aktifkan"
+              : "Tidak Didukung"
+            : systemNotificationPermission === "error"
+              ? "Coba Lagi"
+              : "Aktifkan";
+
   useEffect(() => {
     if (toastQueue.length === 0 || showPermissionSheet || startBlockInfo) {
       return;
@@ -1070,6 +1141,110 @@ export default function HomePage() {
       );
     }
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const setupSystemNotifications = async () => {
+      const isLocalhost =
+        window.location.hostname === "localhost" ||
+        window.location.hostname === "127.0.0.1";
+      const canRegister =
+        ("Notification" in window) &&
+        ("serviceWorker" in navigator) &&
+        (window.isSecureContext || isLocalhost);
+
+      if (!canRegister) {
+        if (!cancelled) {
+          useSystemNotificationsRef.current = false;
+          setUseSystemNotifications(false);
+          setSystemNotificationPermission("unsupported");
+        }
+        return;
+      }
+
+      let permission: NotificationPermission;
+      try {
+        permission = Notification.permission;
+      } catch {
+        if (!cancelled) {
+          setSystemNotificationPermission("unsupported");
+        }
+        return;
+      }
+
+      if (!cancelled) {
+        const storedPreference = readLocalStorageItem(
+          SYSTEM_NOTIFICATIONS_KEY
+        );
+        const shouldEnable =
+          permission === "granted" && storedPreference !== "false";
+        useSystemNotificationsRef.current = shouldEnable;
+        setUseSystemNotifications(shouldEnable);
+        setSystemNotificationPermission(permission);
+      }
+
+      try {
+        const registration = await navigator.serviceWorker.register(
+          SERVICE_WORKER_FILE,
+          { scope: APP_ROOT_PATH }
+        );
+        if (registration.waiting) {
+          registration.waiting.postMessage({ type: "SKIP_WAITING" });
+        }
+        if (!cancelled) {
+          notificationRegistrationRef.current = registration;
+        }
+      } catch {
+        if (!cancelled) {
+          useSystemNotificationsRef.current = false;
+          setUseSystemNotifications(false);
+          setSystemNotificationPermission("error");
+        }
+      }
+    };
+
+    void setupSystemNotifications();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (
+      !track ||
+      readLocalStorageItem(SYSTEM_NOTIFICATION_HINT_KEY) === "true"
+    ) {
+      return;
+    }
+
+    const iosNeedsHomeScreen =
+      systemNotificationPermission === "unsupported" && isIosBrowser();
+    if (
+      systemNotificationPermission !== "default" &&
+      !iosNeedsHomeScreen
+    ) {
+      return;
+    }
+
+    writeLocalStorageItem(SYSTEM_NOTIFICATION_HINT_KEY, "true");
+    const timer = window.setTimeout(() => {
+      enqueueToast({
+        title: iosNeedsHomeScreen
+          ? "Notifikasi di iPhone"
+          : "Aktifkan Notifikasi Lari",
+        message: iosNeedsHomeScreen
+          ? "Pilih Bagikan → Tambahkan ke Layar Utama, buka app dari ikon, lalu ketuk tombol lonceng."
+          : "Ketuk tombol lonceng di peta agar progres, checkpoint, lap, dan peringatan tampil di panel notifikasi HP.",
+        severity: "info",
+        autoHideMs: 9000,
+      });
+    }, 1200);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [systemNotificationPermission, track]);
 
   useEffect(() => {
     const readSharedAchievement = () => {
@@ -1369,6 +1544,10 @@ export default function HomePage() {
     lastPositionRef.current = null;
     warningStateRef.current = {};
     offRouteStateRef.current = { outside: false, lastShown: 0 };
+    lastLiveNotificationKeyRef.current = null;
+    if (useSystemNotificationsRef.current) {
+      void closeRunSystemNotifications();
+    }
     resetProgressTracking();
     applySession(createIdleSession(track.id));
   };
@@ -1461,6 +1640,269 @@ export default function HomePage() {
         return prev;
       }
       return [...prev, candidate];
+    });
+  };
+
+  const resolveNotificationMetrics = (
+    sourceSession: RunSession
+  ): RunNotificationMetrics => {
+    const safeProgress = Number.isFinite(sourceSession.routeProgressMeters)
+      ? Math.max(0, sourceSession.routeProgressMeters)
+      : 0;
+    const completedLaps =
+      trackDistance > 0
+        ? isLoopTrack
+          ? Math.floor(safeProgress / trackDistance)
+          : safeProgress >= trackDistance
+            ? 1
+            : 0
+        : 0;
+    const atLapBoundary =
+      sourceSession.status === "finished" &&
+      completedLaps > 0 &&
+      trackDistance > 0 &&
+      safeProgress % trackDistance <= 0.01;
+
+    return {
+      distanceMeters: sourceSession.distanceMeters,
+      durationSeconds: sourceSession.durationSeconds,
+      averagePacePerKm: sourceSession.averagePacePerKm,
+      completedLaps,
+      currentLapNumber: isLoopTrack
+        ? atLapBoundary
+          ? completedLaps
+          : completedLaps + 1
+        : 1,
+    };
+  };
+
+  const ensureNotificationRegistration =
+    async (): Promise<ServiceWorkerRegistration | null> => {
+      if (notificationRegistrationRef.current) {
+        return notificationRegistrationRef.current;
+      }
+      if (!("serviceWorker" in navigator)) {
+        return null;
+      }
+
+      try {
+        const existing =
+          await navigator.serviceWorker.getRegistration(APP_ROOT_PATH);
+        const registration =
+          existing ??
+          (await navigator.serviceWorker.register(SERVICE_WORKER_FILE, {
+            scope: APP_ROOT_PATH,
+          }));
+        notificationRegistrationRef.current = registration;
+        return registration;
+      } catch {
+        return null;
+      }
+    };
+
+  const deliverSystemNotification = async (
+    payload: RunNotificationPayload,
+    force = false
+  ): Promise<boolean> => {
+    if (!force && !useSystemNotificationsRef.current) {
+      return false;
+    }
+    if (!("Notification" in window)) {
+      return false;
+    }
+
+    let permission: NotificationPermission;
+    try {
+      permission = Notification.permission;
+    } catch {
+      return false;
+    }
+    if (permission !== "granted") {
+      if (permission === "denied") {
+        useSystemNotificationsRef.current = false;
+        setUseSystemNotifications(false);
+        setSystemNotificationPermission("denied");
+      }
+      return false;
+    }
+
+    const options: NotificationOptions & {
+      renotify?: boolean;
+      vibrate?: number[];
+    } = {
+      body: payload.body,
+      tag: payload.tag,
+      icon: NOTIFICATION_ICON_PATH,
+      badge: NOTIFICATION_BADGE_PATH,
+      data: {
+        url: new URL(APP_ROOT_PATH, window.location.origin).href,
+      },
+      silent: payload.silent,
+      renotify: payload.renotify,
+      requireInteraction: payload.requireInteraction,
+      ...(payload.silent ? {} : { vibrate: [180, 80, 180] }),
+    };
+
+    try {
+      const registration = await ensureNotificationRegistration();
+      if (registration) {
+        await registration.showNotification(payload.title, options);
+        return true;
+      }
+
+      const notification = new Notification(payload.title, options);
+      notification.onclick = () => {
+        window.focus();
+        notification.close();
+      };
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const closeRunSystemNotifications = async () => {
+    const registration = await ensureNotificationRegistration();
+    if (!registration || !("getNotifications" in registration)) {
+      return;
+    }
+
+    try {
+      const notifications = await registration.getNotifications();
+      notifications.forEach((notification) => {
+        if (notification.tag.startsWith("joging-track-")) {
+          notification.close();
+        }
+      });
+    } catch {
+      // Some browsers expose showNotification without getNotifications.
+    }
+  };
+
+  const requestSystemNotifications = async () => {
+    if (
+      systemNotificationPermission === "unsupported" ||
+      !("Notification" in window)
+    ) {
+      enqueueToast({
+        title: "Notifikasi Sistem Belum Aktif",
+        message: isIosBrowser()
+          ? "Di iPhone, pilih Bagikan → Tambahkan ke Layar Utama. Buka app dari ikon Home Screen, lalu ketuk lonceng kembali."
+          : "Browser ini belum mendukung notifikasi sistem. Toast, suara, dan getar tetap aktif.",
+        severity: "warning",
+        autoHideMs: 9000,
+      });
+      return;
+    }
+
+    if (systemNotificationPermission === "denied") {
+      enqueueToast({
+        title: "Notifikasi Diblokir",
+        message:
+          "Buka pengaturan situs atau pengaturan notifikasi perangkat, izinkan Singapadu Run, lalu muat ulang aplikasi.",
+        severity: "warning",
+        autoHideMs: 9000,
+      });
+      return;
+    }
+
+    setIsRequestingSystemNotification(true);
+    try {
+      let permission = Notification.permission;
+      if (permission === "default") {
+        permission = await Notification.requestPermission();
+      }
+      setSystemNotificationPermission(permission);
+
+      if (permission !== "granted") {
+        useSystemNotificationsRef.current = false;
+        setUseSystemNotifications(false);
+        writeLocalStorageItem(SYSTEM_NOTIFICATIONS_KEY, "false");
+        enqueueToast({
+          title:
+            permission === "denied"
+              ? "Notifikasi Tidak Diizinkan"
+              : "Izin Notifikasi Belum Diberikan",
+          message:
+            "Aplikasi tetap menggunakan toast, suara, dan getar selama layar terbuka.",
+          severity: "warning",
+        });
+        return;
+      }
+
+      const registration = await ensureNotificationRegistration();
+      if (!registration) {
+        setSystemNotificationPermission("error");
+        enqueueToast({
+          title: "Layanan Notifikasi Gagal Dimuat",
+          message: "Periksa koneksi lalu muat ulang aplikasi.",
+          severity: "error",
+        });
+        return;
+      }
+
+      useSystemNotificationsRef.current = true;
+      setUseSystemNotifications(true);
+      writeLocalStorageItem(SYSTEM_NOTIFICATIONS_KEY, "true");
+
+      const current = sessionRef.current;
+      if (track && (current.status === "running" || current.status === "paused")) {
+        await deliverSystemNotification(
+          buildRunNotificationPayload({
+            kind: current.status === "paused" ? "paused" : "live",
+            trackName: track.name,
+            metrics: resolveNotificationMetrics(current),
+          }),
+          true
+        );
+      } else {
+        await deliverSystemNotification(
+          {
+            title: "Notifikasi lari aktif",
+            body:
+              "Checkpoint, lap, progres, dan peringatan rute akan tampil di panel notifikasi HP.",
+            tag: "joging-track-live",
+            silent: false,
+            renotify: true,
+            requireInteraction: false,
+          },
+          true
+        );
+      }
+
+      enqueueToast({
+        title: "Notifikasi Sistem Aktif",
+        message:
+          "Anda dapat mengecek progres dan peringatan dari panel notifikasi HP.",
+        severity: "info",
+      });
+    } catch {
+      setSystemNotificationPermission("error");
+      enqueueToast({
+        title: "Izin Notifikasi Gagal",
+        message: "Browser tidak dapat mengaktifkan notifikasi saat ini.",
+        severity: "error",
+      });
+    } finally {
+      setIsRequestingSystemNotification(false);
+    }
+  };
+
+  const toggleSystemNotifications = async () => {
+    if (!useSystemNotificationsRef.current) {
+      await requestSystemNotifications();
+      return;
+    }
+
+    useSystemNotificationsRef.current = false;
+    setUseSystemNotifications(false);
+    writeLocalStorageItem(SYSTEM_NOTIFICATIONS_KEY, "false");
+    lastLiveNotificationKeyRef.current = null;
+    await closeRunSystemNotifications();
+    enqueueToast({
+      title: "Notifikasi Sistem Dinonaktifkan",
+      message: "Toast, suara, dan getar di dalam aplikasi tetap tersedia.",
+      severity: "info",
     });
   };
 
@@ -1645,13 +2087,12 @@ export default function HomePage() {
     const now = Date.now();
     const latestPosition =
       lastPositionRef.current ?? current.samples[current.samples.length - 1] ?? null;
-    applySession(
-      completeSessionAtPosition({
-        session: current,
-        endedAt: now,
-        position: latestPosition,
-      })
-    );
+    const finishedSession = completeSessionAtPosition({
+      session: current,
+      endedAt: now,
+      position: latestPosition,
+    });
+    applySession(finishedSession);
     setActiveTab("metrics");
     setIsSheetCollapsed(false);
     resetProgressTracking();
@@ -1664,6 +2105,18 @@ export default function HomePage() {
     if (useSoundAndHapticRef.current) {
       triggerVibrate("success");
     }
+    if (useSystemNotificationsRef.current && track) {
+      void (async () => {
+        await closeRunSystemNotifications();
+        await deliverSystemNotification(
+          buildRunNotificationPayload({
+            kind: "finished",
+            trackName: track.name,
+            metrics: resolveNotificationMetrics(finishedSession),
+          })
+        );
+      })();
+    }
   };
 
   const pauseSession = (): boolean => {
@@ -1673,7 +2126,7 @@ export default function HomePage() {
     }
 
     const now = Date.now();
-    applySession({
+    const pausedSession: RunSession = {
       ...current,
       status: "paused",
       pausedAt: now,
@@ -1683,7 +2136,8 @@ export default function HomePage() {
         totalPausedMilliseconds: current.totalPausedMilliseconds,
       }),
       persisted: false,
-    });
+    };
+    applySession(pausedSession);
     setFollowUser(false);
     if (!functionalTestActiveRef.current) {
       enqueueToast({
@@ -1692,6 +2146,15 @@ export default function HomePage() {
         severity: "info",
         autoHideMs: 4000,
       });
+      if (track) {
+        void deliverSystemNotification(
+          buildRunNotificationPayload({
+            kind: "paused",
+            trackName: track.name,
+            metrics: resolveNotificationMetrics(pausedSession),
+          })
+        );
+      }
     }
     return true;
   };
@@ -1712,7 +2175,7 @@ export default function HomePage() {
         }
       : null;
 
-    applySession({
+    const resumedSession: RunSession = {
       ...current,
       status: "running",
       pausedAt: null,
@@ -1721,7 +2184,8 @@ export default function HomePage() {
       samples: resumeBaseline
         ? [...current.samples.slice(-299), resumeBaseline]
         : current.samples,
-    });
+    };
+    applySession(resumedSession);
     setFollowUser(true);
     if (!functionalTestActiveRef.current) {
       enqueueToast({
@@ -1730,6 +2194,15 @@ export default function HomePage() {
         severity: "info",
         autoHideMs: 4000,
       });
+      if (track) {
+        void deliverSystemNotification(
+          buildRunNotificationPayload({
+            kind: "resumed",
+            trackName: track.name,
+            metrics: resolveNotificationMetrics(resumedSession),
+          })
+        );
+      }
     }
     return true;
   };
@@ -1846,13 +2319,30 @@ export default function HomePage() {
       ];
       const closestIndex = 0;
 
-      applySession({
+      const startedSession: RunSession = {
         ...createIdleSession(track.id),
         status: "running",
         startedAt: Date.now(),
         samples: initialSamples,
         closestIndex,
-      });
+      };
+      applySession(startedSession);
+      lastLiveNotificationKeyRef.current = buildLiveNotificationUpdateKey(
+        0,
+        0
+      );
+      if (useSystemNotificationsRef.current) {
+        void (async () => {
+          await closeRunSystemNotifications();
+          await deliverSystemNotification(
+            buildRunNotificationPayload({
+              kind: "started",
+              trackName: track.name,
+              metrics: resolveNotificationMetrics(startedSession),
+            })
+          );
+        })();
+      }
     } catch (error) {
       const message =
         isGeolocationPositionError(error)
@@ -2462,6 +2952,14 @@ export default function HomePage() {
         );
       } else {
         setWarningLog((prev) => [actualWinner, ...prev].slice(0, 15));
+        void deliverSystemNotification(
+          buildRunNotificationPayload({
+            kind: "warning",
+            title: actualWinner.areaName,
+            message: actualWinner.message,
+            distanceMeters: actualWinner.distanceMeters,
+          })
+        );
       }
 
       if (useSoundAndHapticRef.current) {
@@ -2523,6 +3021,14 @@ export default function HomePage() {
       severity: event.type,
       distanceMeters: event.distanceMeters,
     });
+    void deliverSystemNotification(
+      buildRunNotificationPayload({
+        kind: "off-route",
+        title: event.areaName,
+        message: event.message,
+        distanceMeters: event.distanceMeters,
+      })
+    );
 
     if (useSoundAndHapticRef.current) {
       playWarningSound("warning");
@@ -2650,6 +3156,44 @@ export default function HomePage() {
           progressWaypointIndex
         );
 
+        const notificationMetrics = resolveNotificationMetrics(next);
+        const crossedCheckpoint = findLatestCrossedCheckpoint({
+          previousProgressMeters:
+            currentAfterValidation.routeProgressMeters,
+          currentProgressMeters: routeProgressResult.routeProgressMeters,
+          lapDistanceMeters: trackDistance,
+          isLoop: isLoopTrack,
+          cumulativeDistances,
+          checkpoints: track.checkpoints,
+        });
+        if (crossedCheckpoint) {
+          void deliverSystemNotification(
+            buildRunNotificationPayload({
+              kind: "checkpoint",
+              checkpointName: crossedCheckpoint.checkpoint.name,
+              lapNumber: crossedCheckpoint.lapNumber,
+              metrics: notificationMetrics,
+            })
+          );
+        }
+
+        const liveNotificationKey = buildLiveNotificationUpdateKey(
+          next.distanceMeters,
+          next.durationSeconds
+        );
+        if (
+          liveNotificationKey !== lastLiveNotificationKeyRef.current
+        ) {
+          lastLiveNotificationKeyRef.current = liveNotificationKey;
+          void deliverSystemNotification(
+            buildRunNotificationPayload({
+              kind: "live",
+              trackName: track.name,
+              metrics: notificationMetrics,
+            })
+          );
+        }
+
         if (
           isLoopTrack &&
           routeProgressResult.completedLaps > completedLapsBefore
@@ -2668,6 +3212,13 @@ export default function HomePage() {
           setWarningPopup(finishPopup);
           setActiveWarningId("finish-line");
           setWarningLog((prev) => [finishPopup, ...prev].slice(0, 15));
+          void deliverSystemNotification(
+            buildRunNotificationPayload({
+              kind: "lap",
+              completedLap,
+              metrics: notificationMetrics,
+            })
+          );
 
           if (useSoundAndHapticRef.current) {
             playWarningSound("info");
@@ -2696,6 +3247,43 @@ export default function HomePage() {
     isSimulating,
     permissionStatus,
   ]);
+
+  useEffect(() => {
+    const publishLatestRunStatus = () => {
+      if (
+        document.visibilityState === "visible" ||
+        !track ||
+        isSimulatingRef.current
+      ) {
+        return;
+      }
+
+      const current = sessionRef.current;
+      if (current.status !== "running") {
+        return;
+      }
+
+      lastLiveNotificationKeyRef.current = buildLiveNotificationUpdateKey(
+        current.distanceMeters,
+        current.durationSeconds
+      );
+      void deliverSystemNotification(
+        buildRunNotificationPayload({
+          kind: "live",
+          trackName: track.name,
+          metrics: resolveNotificationMetrics(current),
+        })
+      );
+    };
+
+    document.addEventListener("visibilitychange", publishLatestRunStatus);
+    return () => {
+      document.removeEventListener(
+        "visibilitychange",
+        publishLatestRunStatus
+      );
+    };
+  }, [isLoopTrack, track, trackDistance]);
 
   // Persist paused snapshots and completed sessions in local history.
   useEffect(() => {
@@ -3058,6 +3646,36 @@ export default function HomePage() {
                     aria-label="Tampilkan seluruh rute"
                   >
                     <Map size={20} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    className={`overlay-fab notification-toggle ${
+                      useSystemNotifications ? "active" : ""
+                    } ${
+                      systemNotificationPermission === "default"
+                        ? "needs-permission"
+                        : ""
+                    } ${
+                      systemNotificationPermission === "denied"
+                        ? "blocked"
+                        : ""
+                    }`}
+                    onClick={() => {
+                      void toggleSystemNotifications();
+                    }}
+                    disabled={
+                      isRequestingSystemNotification ||
+                      systemNotificationPermission === "checking"
+                    }
+                    title={`Notifikasi Sistem: ${systemNotificationActionLabel}`}
+                    aria-label={`${systemNotificationActionLabel} notifikasi sistem lari`}
+                    aria-pressed={useSystemNotifications}
+                  >
+                    {useSystemNotifications ? (
+                      <Bell size={20} aria-hidden="true" />
+                    ) : (
+                      <BellOff size={20} aria-hidden="true" />
+                    )}
                   </button>
                   <button 
                     type="button" 
@@ -3679,6 +4297,54 @@ export default function HomePage() {
               <div className="panel-section-title">Setelan Aplikasi</div>
               
               <div className="settings-options-group">
+                <div className="setting-notification-row">
+                  <div className="setting-info">
+                    <strong>
+                      {useSystemNotifications ? (
+                        <Bell size={18} className="setting-icon-inline" />
+                      ) : (
+                        <BellOff size={18} className="setting-icon-inline" />
+                      )}
+                      <span>Notifikasi Sistem</span>
+                    </strong>
+                    <span>{systemNotificationHelp}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className={`btn-notification-setting ${
+                      useSystemNotifications ? "active" : ""
+                    } ${
+                      systemNotificationPermission === "denied" ||
+                      systemNotificationPermission === "error"
+                        ? "attention"
+                        : ""
+                    }`}
+                    onClick={() => {
+                      void toggleSystemNotifications();
+                    }}
+                    disabled={
+                      isRequestingSystemNotification ||
+                      systemNotificationPermission === "checking"
+                    }
+                    aria-pressed={useSystemNotifications}
+                  >
+                    {isRequestingSystemNotification ? (
+                      <Loader2
+                        size={16}
+                        className="animate-spin"
+                        aria-hidden="true"
+                      />
+                    ) : useSystemNotifications ? (
+                      <Bell size={16} aria-hidden="true" />
+                    ) : (
+                      <BellOff size={16} aria-hidden="true" />
+                    )}
+                    <span>{systemNotificationActionLabel}</span>
+                  </button>
+                </div>
+
+                <div className="settings-divider"></div>
+
                 <div className="setting-toggle-row">
                   <div className="setting-info">
                     <strong>

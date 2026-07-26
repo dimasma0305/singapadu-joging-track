@@ -285,6 +285,7 @@ main.track-shell {
 }
 
 .overlay-fab {
+  position: relative;
   width: 46px;
   height: 46px;
   border-radius: 12px;
@@ -312,6 +313,28 @@ main.track-shell {
   border-color: var(--color-secondary);
   color: var(--color-secondary);
   box-shadow: 0 0 15px rgba(14, 165, 233, 0.3);
+}
+
+.overlay-fab:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.overlay-fab.notification-toggle.needs-permission::after,
+.overlay-fab.notification-toggle.blocked::after {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid #07111f;
+  border-radius: 50%;
+  background: var(--color-warning);
+  content: "";
+}
+
+.overlay-fab.notification-toggle.blocked::after {
+  background: var(--color-danger);
 }
 
 .map-status-card {
@@ -2174,6 +2197,13 @@ main.track-shell {
   gap: 20px;
 }
 
+.setting-notification-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
 .setting-info {
   display: flex;
   flex-direction: column;
@@ -2191,6 +2221,41 @@ main.track-shell {
   font-size: 0.76rem;
   color: var(--color-text-secondary);
   line-height: 1.35;
+}
+
+.btn-notification-setting {
+  min-width: 108px;
+  min-height: 44px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(56, 189, 248, 0.34);
+  border-radius: 12px;
+  background: rgba(14, 165, 233, 0.1);
+  color: #bae6fd;
+  padding: 9px 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-size: 0.74rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.btn-notification-setting.active {
+  border-color: rgba(34, 197, 94, 0.52);
+  background: rgba(34, 197, 94, 0.15);
+  color: #bbf7d0;
+}
+
+.btn-notification-setting.attention {
+  border-color: rgba(245, 158, 11, 0.46);
+  background: rgba(245, 158, 11, 0.12);
+  color: #fde68a;
+}
+
+.btn-notification-setting:disabled {
+  opacity: 0.62;
+  cursor: wait;
 }
 
 .settings-divider {
@@ -3112,6 +3177,15 @@ input:checked + .toggle-slider:before {
 
   .dashboard-main-stat .val {
     font-size: 1.35rem;
+  }
+
+  .setting-notification-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .btn-notification-setting {
+    width: 100%;
   }
 }
 

@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Singapadu Tengah Run Track</title>
+  <defs>
+    <linearGradient id="background" x1="64" y1="32" x2="448" y2="480" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#102a43"/>
+      <stop offset="1" stop-color="#030712"/>
+    </linearGradient>
+    <linearGradient id="route" x1="128" y1="390" x2="390" y2="102" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#22c55e"/>
+      <stop offset="0.55" stop-color="#06b6d4"/>
+      <stop offset="1" stop-color="#38bdf8"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="9" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#background)"/>
+  <circle cx="256" cy="256" r="188" fill="none" stroke="#ffffff" stroke-opacity=".06" stroke-width="2"/>
+  <path
+    d="M151 365c-44-45-35-114 12-147 39-27 97-12 124-54 25-39 12-88 45-106 33-18 73 7 77 45 5 47-37 69-68 95-35 30-37 70-25 109 13 43-6 95-49 112-42 17-86-14-116-54Z"
+    fill="none"
+    stroke="#0ea5e9"
+    stroke-opacity=".2"
+    stroke-width="34"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M151 365c-44-45-35-114 12-147 39-27 97-12 124-54 25-39 12-88 45-106 33-18 73 7 77 45 5 47-37 69-68 95-35 30-37 70-25 109 13 43-6 95-49 112-42 17-86-14-116-54Z"
+    fill="none"
+    stroke="url(#route)"
+    stroke-width="17"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    filter="url(#glow)"
+  />
+  <circle cx="151" cy="365" r="25" fill="#07111f" stroke="#22c55e" stroke-width="12"/>
+  <circle cx="151" cy="365" r="7" fill="#dcfce7"/>
+  <path d="M342 63v74" stroke="#f8fafc" stroke-width="12" stroke-linecap="round"/>
+  <path d="M348 69h72l-17 24 17 24h-72Z" fill="#fb7185"/>
+</svg>
