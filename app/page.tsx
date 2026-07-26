@@ -81,6 +81,9 @@ import {
   addSessionToHistory,
   parseSessionHistory,
   parseWarningHistory,
+  readLocalStorageItem,
+  removeLocalStorageItem,
+  writeLocalStorageItem,
 } from "./lib/storage-utils";
 import {
   buildAchievementProgress,
@@ -1048,19 +1051,22 @@ export default function HomePage() {
   // Load configuration & history from localStorage
   useEffect(() => {
     if (typeof window !== "undefined") {
-      const hapticVal = localStorage.getItem("joging-track:sound-haptic");
+      const hapticVal = readLocalStorageItem("joging-track:sound-haptic");
       if (hapticVal !== null) {
         setUseSoundAndHaptic(hapticVal === "true");
       }
-      const themeVal = localStorage.getItem("joging-track:map-theme");
+      const themeVal = readLocalStorageItem("joging-track:map-theme");
       if (themeVal === "dark" || themeVal === "light") {
         setMapTheme(themeVal as "dark" | "light");
       }
-      localStorage.removeItem("joging-track:achievement-name");
-      localStorage.removeItem("joging-track:certificate-name");
+      removeLocalStorageItem("joging-track:achievement-name");
+      removeLocalStorageItem("joging-track:certificate-name");
 
       setSessionHistory(
-        parseSessionHistory(localStorage.getItem(TRACK_KEY), SESSION_HISTORY_LIMIT)
+        parseSessionHistory(
+          readLocalStorageItem(TRACK_KEY),
+          SESSION_HISTORY_LIMIT
+        )
       );
     }
   }, []);
@@ -1092,11 +1098,10 @@ export default function HomePage() {
 
   // Check for secure context and GPS permission status on load
   useEffect(() => {
-    try {
-      setWarningLog(parseWarningHistory(localStorage.getItem(WARNING_LOG_KEY)));
-    } finally {
-      setWarningLogStorageReady(true);
-    }
+    setWarningLog(
+      parseWarningHistory(readLocalStorageItem(WARNING_LOG_KEY))
+    );
+    setWarningLogStorageReady(true);
   }, []);
 
   useEffect(() => {
@@ -1104,11 +1109,10 @@ export default function HomePage() {
       return;
     }
 
-    try {
-      localStorage.setItem(WARNING_LOG_KEY, JSON.stringify(warningLog.slice(0, 15)));
-    } catch {
-      // Storage can be unavailable in private or restricted browser contexts.
-    }
+    writeLocalStorageItem(
+      WARNING_LOG_KEY,
+      JSON.stringify(warningLog.slice(0, 15))
+    );
   }, [warningLog, warningLogStorageReady]);
 
   // Check for secure context and GPS permission status on load
@@ -1229,7 +1233,7 @@ export default function HomePage() {
   const toggleSoundAndHaptic = () => {
     const next = !useSoundAndHaptic;
     setUseSoundAndHaptic(next);
-    localStorage.setItem("joging-track:sound-haptic", String(next));
+    writeLocalStorageItem("joging-track:sound-haptic", String(next));
     if (next) {
       prepareWarningSounds();
     }
@@ -1238,7 +1242,7 @@ export default function HomePage() {
   const toggleMapTheme = () => {
     const next = mapTheme === "dark" ? "light" : "dark";
     setMapTheme(next);
-    localStorage.setItem("joging-track:map-theme", next);
+    writeLocalStorageItem("joging-track:map-theme", next);
   };
 
   const applySession = (next: RunSession) => {
@@ -2012,10 +2016,13 @@ export default function HomePage() {
           );
         }
 
-        localStorage.setItem(
+        const historySaved = writeLocalStorageItem(
           TRACK_KEY,
           JSON.stringify(historyUpdate.nextHistory)
         );
+        if (!historySaved) {
+          throw new Error("Browser menolak penyimpanan sesi uji.");
+        }
         setSessionHistory(historyUpdate.nextHistory);
 
         const newlyUnlockedTitles = historyUpdate.newlyUnlocked.map(
@@ -2124,29 +2131,18 @@ export default function HomePage() {
     );
 
     const storageTestKey = `joging-track:functional-test:${Date.now()}`;
-    try {
-      localStorage.setItem(storageTestKey, "ok");
-      const storageWorks = localStorage.getItem(storageTestKey) === "ok";
-      updateFunctionalTestResult(
-        "local-storage",
-        storageWorks ? "passed" : "failed",
-        storageWorks
-          ? "Write, read, dan cleanup localStorage berhasil."
-          : "Nilai localStorage tidak dapat dibaca kembali."
-      );
-    } catch {
-      updateFunctionalTestResult(
-        "local-storage",
-        "failed",
-        "Browser menolak akses localStorage."
-      );
-    } finally {
-      try {
-        localStorage.removeItem(storageTestKey);
-      } catch {
-        // The failed storage result above already reports restricted access.
-      }
-    }
+    const storageWriteWorks = writeLocalStorageItem(storageTestKey, "ok");
+    const storageWorks =
+      storageWriteWorks &&
+      readLocalStorageItem(storageTestKey) === "ok";
+    updateFunctionalTestResult(
+      "local-storage",
+      storageWorks ? "passed" : "failed",
+      storageWorks
+        ? "Write, read, dan cleanup localStorage berhasil."
+        : "Browser menolak akses localStorage."
+    );
+    removeLocalStorageItem(storageTestKey);
 
     try {
       const diagnosticDistance = Math.max(1000, Math.round(trackDistance));
@@ -2721,8 +2717,11 @@ export default function HomePage() {
       SESSION_HISTORY_LIMIT
     );
 
-    try {
-      localStorage.setItem(TRACK_KEY, JSON.stringify(nextHistory));
+    const historySaved = writeLocalStorageItem(
+      TRACK_KEY,
+      JSON.stringify(nextHistory)
+    );
+    if (historySaved) {
       setSessionHistory(nextHistory);
       applySession({ ...session, persisted: true });
       enqueueToast({
@@ -2732,7 +2731,7 @@ export default function HomePage() {
           : "Hasil lari terbaru sudah disimpan di Riwayat.",
         severity: "info",
       });
-    } catch {
+    } else {
       enqueueToast({
         title: "Riwayat Belum Tersimpan",
         message: "Penyimpanan browser tidak tersedia atau penuh. Kosongkan ruang lalu coba lagi.",
@@ -3819,7 +3818,7 @@ export default function HomePage() {
                     className="btn-danger" 
                     onClick={() => {
                       if (confirm("Apakah Anda yakin ingin menghapus semua riwayat sesi lari lokal?")) {
-                        localStorage.removeItem(TRACK_KEY);
+                        removeLocalStorageItem(TRACK_KEY);
                         setSessionHistory([]);
                         resetSession();
                       }

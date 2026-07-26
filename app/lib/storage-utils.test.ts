@@ -4,6 +4,10 @@ import {
   addSessionToHistory,
   parseSessionHistory,
   parseWarningHistory,
+  readLocalStorageItem,
+  removeLocalStorageItem,
+  writeLocalStorageItem,
+  type BrowserStorage,
 } from "./storage-utils";
 
 const createFinishedSession = (
@@ -112,5 +116,43 @@ describe("warning history storage", () => {
   test("ignores malformed or invalid storage values", () => {
     expect(parseWarningHistory("not-json")).toEqual([]);
     expect(parseWarningHistory(JSON.stringify([{ areaId: "incomplete" }]))).toEqual([]);
+  });
+});
+
+describe("Safari-safe local storage access", () => {
+  test("reads, writes, and removes values when storage is available", () => {
+    const values = new Map<string, string>();
+    const storage: BrowserStorage = {
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => {
+        values.set(key, value);
+      },
+      removeItem: (key) => {
+        values.delete(key);
+      },
+    };
+
+    expect(writeLocalStorageItem("session", "saved", storage)).toBe(true);
+    expect(readLocalStorageItem("session", storage)).toBe("saved");
+    expect(removeLocalStorageItem("session", storage)).toBe(true);
+    expect(readLocalStorageItem("session", storage)).toBeNull();
+  });
+
+  test("returns safe fallbacks when Safari blocks storage operations", () => {
+    const restrictedStorage: BrowserStorage = {
+      getItem: () => {
+        throw new DOMException("The operation is insecure.", "SecurityError");
+      },
+      setItem: () => {
+        throw new DOMException("The operation is insecure.", "SecurityError");
+      },
+      removeItem: () => {
+        throw new DOMException("The operation is insecure.", "SecurityError");
+      },
+    };
+
+    expect(readLocalStorageItem("session", restrictedStorage)).toBeNull();
+    expect(writeLocalStorageItem("session", "saved", restrictedStorage)).toBe(false);
+    expect(removeLocalStorageItem("session", restrictedStorage)).toBe(false);
   });
 });

@@ -1,5 +1,70 @@
 import type { RunSession, SessionSample, WarningEvent } from "./types";
 
+export type BrowserStorage = Pick<
+  Storage,
+  "getItem" | "setItem" | "removeItem"
+>;
+
+const resolveBrowserLocalStorage = (): BrowserStorage | null => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+};
+
+export const readLocalStorageItem = (
+  key: string,
+  storage: BrowserStorage | null = resolveBrowserLocalStorage()
+): string | null => {
+  if (!storage) {
+    return null;
+  }
+
+  try {
+    return storage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
+export const writeLocalStorageItem = (
+  key: string,
+  value: string,
+  storage: BrowserStorage | null = resolveBrowserLocalStorage()
+): boolean => {
+  if (!storage) {
+    return false;
+  }
+
+  try {
+    storage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+export const removeLocalStorageItem = (
+  key: string,
+  storage: BrowserStorage | null = resolveBrowserLocalStorage()
+): boolean => {
+  if (!storage) {
+    return false;
+  }
+
+  try {
+    storage.removeItem(key);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
 
