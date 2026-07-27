@@ -46,20 +46,31 @@ individual. Fragmen `#p=<token>` membawa seluruh Trophy Case, jumlah run, total
 kilometer, durasi, pace rata-rata, best pace, run terjauh, dan tanggal.
 Profil memakai identitas netral **Pelari Singapadu** dan tidak memiliki input nama.
 
-Payload memakai protokol biner versi 1 dengan varint, bitmask achievement,
-kuantisasi angka, checksum CRC-16, dan Base64URL tanpa padding. Fragmen tidak
-dikirim ke server dan dapat dibaca sepenuhnya di browser penerima. Tombol
+Payload memakai format biner kanonis tanpa field versi: varint, bitmask
+achievement, kuantisasi angka, public key perangkat, signature ECDSA P-256, dan
+Base64URL tanpa padding. Browser penerima memverifikasi signature sebelum
+membaca data. Fragmen tidak dikirim ke server dan seluruh proses tetap berjalan
+di sisi klien. Tombol
 **Bagikan PNG** membuat artwork portrait 1080 × 1350; di perangkat yang mendukung
 Web Share file akan diteruskan ke aplikasi sosial, sedangkan browser lain
 mengunduh berkas PNG. Tampilan URL dan PNG memuat garis rute dari data lintasan,
 ringkasan jarak, waktu, pace, dan seluruh achievement.
 
+Setiap instalasi membuat private key WebCrypto non-exportable di IndexedDB.
+Riwayat `localStorage` disimpan dalam envelope bertanda tangan dengan kunci yang
+sama; data unsigned, signature berubah, atau fingerprint perangkat berbeda akan
+ditolak. Ini mempersulit modifikasi biasa, tetapi bukan bukti identitas absolut:
+karena tidak ada backend atau trust anchor eksternal, pemilik browser yang
+menguasai seluruh storage dan runtime tetap dapat mengganti identitas perangkat
+beserta seluruh data.
+
 ## Uji fungsional otomatis
 
 Buka tab **Setelan**, lalu tekan **Jalankan Semua Tes**. Runner menjalankan satu
-sesi rute sintetis dan melaporkan 10 pemeriksaan: konfigurasi rute, render peta,
-localStorage, protokol share, start, progress/metrik, pause/resume, warning
-geofence, finish, dan achievement. Sesi simulasi yang menuntaskan seluruh
+sesi rute sintetis dan melaporkan 11 pemeriksaan: konfigurasi rute, render peta,
+penyimpanan bertanda tangan, protokol share, start, progress/metrik,
+pause/resume, warning geofence, multi-lap, finish, dan achievement. Sesi
+simulasi yang menuntaskan seluruh
 pengujian disimpan sebagai satu run berlabel **Uji Otomatis**, sehingga progress
 dan badge achievement ikut diperbarui. Pace yang disimpan dinormalisasi menjadi
 8:00/km agar percepatan waktu simulasi tidak merusak statistik profil. Warning

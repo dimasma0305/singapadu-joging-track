@@ -732,7 +732,16 @@ main.track-shell {
   padding: 9px 8px 2px;
   font-size: 0.66rem;
   line-height: 1.4;
-  text-align: center;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 5px;
+  text-align: left;
+}
+
+.shared-run-summary-note svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
 }
 
 .location-permission-content {

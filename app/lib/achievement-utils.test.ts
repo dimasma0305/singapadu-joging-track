@@ -9,6 +9,11 @@ import {
   normalizeRunnerName,
   summarizeAchievements,
 } from "./achievement-utils";
+import {
+  createEphemeralSigningIdentity,
+  decodeBase64UrlBytes,
+  encodeBase64UrlBytes,
+} from "./integrity-utils";
 import type { RunSession } from "./types";
 
 const createFinishedSession = (
@@ -82,22 +87,24 @@ describe("compact runner-profile share protocol", () => {
     expect(normalizeRunnerName("  Ni   Luh Éka  ")).toBe("Ni Luh Éka");
   });
 
-  test("round-trips the full trophy case and aggregate run statistics", () => {
+  test("round-trips signed profile statistics without a protocol version", async () => {
     const progress = buildAchievementProgress(sessions);
     const payload = createAchievementCollectionSharePayload(
       progress,
       summary,
       "Made Dimas"
     );
-    const token = encodeAchievementCollectionShare(payload);
-    const decoded = decodeAchievementCollectionShare(token);
-    const url = buildAchievementCollectionShareUrl(
+    const identity = await createEphemeralSigningIdentity();
+    const token = await encodeAchievementCollectionShare(payload, identity);
+    const decoded = await decodeAchievementCollectionShare(token);
+    const url = await buildAchievementCollectionShareUrl(
       "https://example.com/joging?track=main",
-      payload
+      payload,
+      identity
     );
 
     expect(token).toMatch(/^[A-Za-z0-9_-]+$/);
-    expect(token.length).toBeLessThan(72);
+    expect(token.length).toBeLessThan(260);
     expect(decoded.completedRuns).toBe(10);
     expect(decoded.totalDistanceMeters).toBe(32_000);
     expect(decoded.totalDurationSeconds).toBe(18_000);
@@ -112,23 +119,40 @@ describe("compact runner-profile share protocol", () => {
       "distance-10k",
       "pace-six",
     ]);
-    expect(decodeAchievementCollectionHash(new URL(url).hash)?.runnerName).toBe("Made Dimas");
-    expect(decodeAchievementCollectionHash("#section")).toBeNull();
+    expect(decoded.integrityVerified).toBe(true);
+    expect(decoded.signerFingerprint).toBe(identity.fingerprint);
+    expect("protocolVersion" in decoded).toBe(false);
+    expect(
+      (await decodeAchievementCollectionHash(new URL(url).hash))?.runnerName
+    ).toBe("Made Dimas");
+    expect(await decodeAchievementCollectionHash("#section")).toBeNull();
   });
 
-  test("rejects a modified full-profile token", () => {
+  test("rejects a modified full-profile token", async () => {
     const payload = createAchievementCollectionSharePayload(
       buildAchievementProgress(sessions),
       summary,
       ""
     );
-    const token = encodeAchievementCollectionShare(payload);
-    const replacement = token.endsWith("A") ? "B" : "A";
+    const token = await encodeAchievementCollectionShare(
+      payload,
+      await createEphemeralSigningIdentity()
+    );
+    const modifiedBytes = decodeBase64UrlBytes(token);
+    modifiedBytes[2] ^= 0x01;
 
-    expect(() =>
+    expect(
       decodeAchievementCollectionShare(
-        `${token.slice(0, -1)}${replacement}`
+        encodeBase64UrlBytes(modifiedBytes)
       )
-    ).toThrow("Checksum ringkasan achievement tidak cocok");
+    ).rejects.toThrow("Signature ringkasan achievement tidak valid");
+  });
+
+  test("does not keep the old versioned CRC payload as a fallback", async () => {
+    await expect(
+      decodeAchievementCollectionShare(
+        "AQEC_wLCAsgGvgHAAd4SAKjJ"
+      )
+    ).rejects.toThrow("Payload ringkasan achievement terlalu pendek");
   });
 });

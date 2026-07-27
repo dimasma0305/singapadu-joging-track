@@ -1,5 +1,17 @@
 import type { RunSession } from "./types";
 import { formatDistance, formatDuration, formatPace } from "./track-utils";
+import {
+  decodeBase64UrlBytes,
+  encodeBase64UrlBytes,
+  fingerprintPublicKey,
+  getOrCreateDeviceSigningIdentity,
+  importDeviceVerificationKey,
+  INTEGRITY_PUBLIC_KEY_BYTES,
+  INTEGRITY_SIGNATURE_BYTES,
+  signIntegrityPayload,
+  verifyIntegrityPayload,
+  type DeviceSigningIdentity,
+} from "./integrity-utils";
 
 export type AchievementId =
   | "first-run"
@@ -68,10 +80,10 @@ export type AchievementCollectionSharePayload = {
 
 export type DecodedAchievementCollectionShare = AchievementCollectionSharePayload & {
   achievements: AchievementDefinition[];
-  protocolVersion: number;
+  integrityVerified: true;
+  signerFingerprint: string;
 };
 
-const COLLECTION_SHARE_PROTOCOL_VERSION = 1;
 const COLLECTION_SHARE_HASH_PREFIX = "#p=";
 const DAY_MILLISECONDS = 86_400_000;
 const PROTOCOL_EPOCH_DAY = Math.floor(Date.UTC(2020, 0, 1) / DAY_MILLISECONDS);
@@ -79,12 +91,14 @@ const MAX_RUNS = 100_000;
 const MAX_DISTANCE_DECAMETERS = 10_000_000;
 const MAX_PACE_SECONDS = 7_200;
 const MAX_NAME_BYTES = 160;
-const MAX_TOKEN_LENGTH = 320;
+const MAX_TOKEN_LENGTH = 480;
 const MAX_ACHIEVEMENT_DAY_OFFSET = 16_383;
 const MAX_DURATION_DECASECONDS = 100_000_000;
+const SIGNED_TOKEN_TRAILER_BYTES =
+  INTEGRITY_PUBLIC_KEY_BYTES + INTEGRITY_SIGNATURE_BYTES;
 
-// The array order is part of compact share protocol v1. Append new definitions;
-// never reorder existing entries without introducing a new protocol version.
+// The array order is part of the canonical signed payload. Reordering an entry
+// would change the meaning of existing signed links, so this order is immutable.
 export const ACHIEVEMENT_DEFINITIONS: readonly AchievementDefinition[] = [
   {
     id: "first-run",
@@ -324,44 +338,16 @@ const readVarUint = (
   throw new Error("Nilai payload achievement terlalu besar.");
 };
 
-const calculateCrc16 = (bytes: ArrayLike<number>, length = bytes.length): number => {
-  let crc = 0xffff;
-  for (let index = 0; index < length; index += 1) {
-    crc ^= bytes[index] << 8;
-    for (let bit = 0; bit < 8; bit += 1) {
-      crc = (crc & 0x8000) !== 0 ? (crc << 1) ^ 0x1021 : crc << 1;
-      crc &= 0xffff;
-    }
-  }
-  return crc;
-};
-
-const encodeBase64Url = (bytes: Uint8Array): string => {
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
-};
-
-const decodeBase64Url = (token: string): Uint8Array => {
+const decodeCollectionToken = (token: string): Uint8Array => {
   if (!token || token.length > MAX_TOKEN_LENGTH || !/^[A-Za-z0-9_-]+$/.test(token)) {
     throw new Error("Token achievement tidak valid.");
   }
 
-  const padded = token.replace(/-/g, "+").replace(/_/g, "/")
-    .padEnd(Math.ceil(token.length / 4) * 4, "=");
-  let binary: string;
   try {
-    binary = atob(padded);
+    return decodeBase64UrlBytes(token, MAX_TOKEN_LENGTH);
   } catch {
     throw new Error("Token achievement bukan Base64URL yang valid.");
   }
-
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 };
 
 const getAchievementIndex = (achievementId: AchievementId): number => {
@@ -463,9 +449,10 @@ export const createAchievementCollectionSharePayload = (
   return payload;
 };
 
-export const encodeAchievementCollectionShare = (
-  payload: AchievementCollectionSharePayload
-): string => {
+export const encodeAchievementCollectionShare = async (
+  payload: AchievementCollectionSharePayload,
+  providedIdentity?: DeviceSigningIdentity
+): Promise<string> => {
   const normalizedPayload: AchievementCollectionSharePayload = {
     ...payload,
     runnerName: normalizeRunnerName(payload.runnerName),
@@ -483,7 +470,6 @@ export const encodeAchievementCollectionShare = (
     Math.floor(normalizedPayload.latestRunAt / DAY_MILLISECONDS) - PROTOCOL_EPOCH_DAY;
   const nameBytes = new TextEncoder().encode(normalizedPayload.runnerName);
   const data: number[] = [
-    COLLECTION_SHARE_PROTOCOL_VERSION,
     getAchievementMask(normalizedPayload.unlockedAchievementIds),
   ];
   writeVarUint(data, normalizedPayload.completedRuns);
@@ -496,38 +482,59 @@ export const encodeAchievementCollectionShare = (
   writeVarUint(data, nameBytes.length);
   data.push(...nameBytes);
 
-  const checksum = calculateCrc16(data);
-  data.push((checksum >> 8) & 0xff, checksum & 0xff);
-  return encodeBase64Url(Uint8Array.from(data));
+  const identity =
+    providedIdentity ?? (await getOrCreateDeviceSigningIdentity());
+  const payloadBytes = Uint8Array.from(data);
+  const signature = await signIntegrityPayload({
+    identity,
+    payload: payloadBytes,
+    purpose: "profile-share",
+  });
+  const tokenBytes = new Uint8Array(
+    payloadBytes.length +
+      identity.publicKeyBytes.length +
+      signature.length
+  );
+  tokenBytes.set(payloadBytes, 0);
+  tokenBytes.set(identity.publicKeyBytes, payloadBytes.length);
+  tokenBytes.set(
+    signature,
+    payloadBytes.length + identity.publicKeyBytes.length
+  );
+  return encodeBase64UrlBytes(tokenBytes);
 };
 
-export const decodeAchievementCollectionShare = (
+export const decodeAchievementCollectionShare = async (
   token: string
-): DecodedAchievementCollectionShare => {
-  const bytes = decodeBase64Url(token);
-  if (bytes.length < 12) {
+): Promise<DecodedAchievementCollectionShare> => {
+  const bytes = decodeCollectionToken(token);
+  if (bytes.length < SIGNED_TOKEN_TRAILER_BYTES + 9) {
     throw new Error("Payload ringkasan achievement terlalu pendek.");
   }
 
-  const dataEnd = bytes.length - 2;
-  const expectedChecksum = (bytes[dataEnd] << 8) | bytes[dataEnd + 1];
-  const actualChecksum = calculateCrc16(bytes, dataEnd);
-  if (expectedChecksum !== actualChecksum) {
-    throw new Error("Checksum ringkasan achievement tidak cocok.");
+  const dataEnd = bytes.length - SIGNED_TOKEN_TRAILER_BYTES;
+  const publicKeyEnd = dataEnd + INTEGRITY_PUBLIC_KEY_BYTES;
+  const payloadBytes = bytes.slice(0, dataEnd);
+  const publicKeyBytes = bytes.slice(dataEnd, publicKeyEnd);
+  const signature = bytes.slice(publicKeyEnd);
+  const publicKey = await importDeviceVerificationKey(publicKeyBytes);
+  const signatureValid = await verifyIntegrityPayload({
+    publicKey,
+    payload: payloadBytes,
+    purpose: "profile-share",
+    signature,
+  });
+  if (!signatureValid) {
+    throw new Error("Signature ringkasan achievement tidak valid.");
   }
-
-  const protocolVersion = bytes[0];
-  if (protocolVersion !== COLLECTION_SHARE_PROTOCOL_VERSION) {
-    throw new Error("Versi ringkasan achievement belum didukung.");
-  }
-
-  const achievementMask = bytes[1];
+  const signerFingerprint = await fingerprintPublicKey(publicKeyBytes);
+  const achievementMask = bytes[0];
   const unlockedAchievementIds = getAchievementIdsFromMask(achievementMask);
   if (unlockedAchievementIds.length === 0) {
     throw new Error("Ringkasan achievement tidak memiliki badge.");
   }
 
-  const cursor = { value: 2 };
+  const cursor = { value: 1 };
   const completedRuns = readVarUint(bytes, cursor, dataEnd);
   const totalDistanceMeters = readVarUint(bytes, cursor, dataEnd) * 10;
   const totalDurationSeconds = readVarUint(bytes, cursor, dataEnd) * 10;
@@ -568,26 +575,33 @@ export const decodeAchievementCollectionShare = (
     achievements: unlockedAchievementIds.map(
       (achievementId) => ACHIEVEMENT_DEFINITIONS[getAchievementIndex(achievementId)]
     ),
-    protocolVersion,
+    integrityVerified: true,
+    signerFingerprint,
   };
 };
 
-export const decodeAchievementCollectionHash = (
+export const decodeAchievementCollectionHash = async (
   hash: string
-): DecodedAchievementCollectionShare | null => {
+): Promise<DecodedAchievementCollectionShare | null> => {
   if (!hash.startsWith(COLLECTION_SHARE_HASH_PREFIX)) {
     return null;
   }
-  return decodeAchievementCollectionShare(hash.slice(COLLECTION_SHARE_HASH_PREFIX.length));
+  return decodeAchievementCollectionShare(
+    hash.slice(COLLECTION_SHARE_HASH_PREFIX.length)
+  );
 };
 
-export const buildAchievementCollectionShareUrl = (
+export const buildAchievementCollectionShareUrl = async (
   baseUrl: string,
-  payload: AchievementCollectionSharePayload
-): string => {
+  payload: AchievementCollectionSharePayload,
+  providedIdentity?: DeviceSigningIdentity
+): Promise<string> => {
   const url = new URL(baseUrl);
   url.search = "";
-  url.hash = `p=${encodeAchievementCollectionShare(payload)}`;
+  url.hash = `p=${await encodeAchievementCollectionShare(
+    payload,
+    providedIdentity
+  )}`;
   return url.toString();
 };
 
@@ -631,7 +645,7 @@ export const shareAchievementCollectionLink = async ({
   baseUrl: string;
   trackName: string;
 }): Promise<ProfileShareResult> => {
-  const url = buildAchievementCollectionShareUrl(baseUrl, payload);
+  const url = await buildAchievementCollectionShareUrl(baseUrl, payload);
   const data: ShareData = {
     title: `Profil Lari · ${trackName}`,
     text: buildAchievementCollectionShareText(payload, trackName),

@@ -81,12 +81,21 @@ import {
 } from "./lib/track-utils";
 import {
   addSessionToHistory,
-  parseSessionHistory,
   parseWarningHistory,
   readLocalStorageItem,
   removeLocalStorageItem,
   writeLocalStorageItem,
 } from "./lib/storage-utils";
+import {
+  protectSessionHistory,
+  restoreProtectedSessionHistory,
+} from "./lib/session-history-integrity";
+import {
+  hardenInitialSession,
+  hardenSessionHistory,
+  hardenSessionTransition,
+  type SessionTransitionOptions,
+} from "./lib/session-state-integrity";
 import {
   buildAchievementProgress,
   buildAchievementCollectionShareUrl,
@@ -433,24 +442,30 @@ const isIosBrowser = (): boolean => {
   return /iPad|iPhone|iPod/.test(ua) && !(window as { MSStream?: unknown }).MSStream;
 };
 
-const createIdleSession = (trackId: string): RunSession => ({
-  sessionId: createSessionId(),
-  trackId,
-  status: "idle",
-  startedAt: null,
-  endedAt: null,
-  pausedAt: null,
-  totalPausedMilliseconds: 0,
-  distanceMeters: 0,
-  durationSeconds: 0,
-  averagePacePerKm: 0,
-  maxPacePerKm: 0,
-  closestIndex: 0,
-  routeProgressMeters: 0,
-  finishPosition: null,
-  samples: [],
-  persisted: false,
-});
+const createIdleSession = (trackId: string): RunSession => {
+  const result = hardenInitialSession({
+    sessionId: createSessionId(),
+    trackId,
+    status: "idle",
+    startedAt: null,
+    endedAt: null,
+    pausedAt: null,
+    totalPausedMilliseconds: 0,
+    distanceMeters: 0,
+    durationSeconds: 0,
+    averagePacePerKm: 0,
+    maxPacePerKm: 0,
+    closestIndex: 0,
+    routeProgressMeters: 0,
+    finishPosition: null,
+    samples: [],
+    persisted: false,
+  });
+  if (!result.valid) {
+    throw new Error(result.reason);
+  }
+  return result.session;
+};
 
 type UnknownRecord = Record<string, unknown>;
 const isString = (value: unknown): value is string => typeof value === "string";
@@ -667,7 +682,11 @@ export default function HomePage() {
   const [loadingTrack, setLoadingTrack] = useState(true);
   const [session, setSession] = useState<RunSession>(() => createIdleSession("main"));
   const [lastPosition, setLastPosition] = useState<SessionSample | null>(null);
-  const [sessionHistory, setSessionHistory] = useState<RunSession[]>([]);
+  const [sessionHistory, setSessionHistory] = useState<RunSession[]>(
+    () => Object.freeze([]) as unknown as RunSession[]
+  );
+  const [sessionHistoryStorageReady, setSessionHistoryStorageReady] =
+    useState(false);
   const [warningPopup, setWarningPopup] = useState<WarningEvent | null>(null);
   const [warningLog, setWarningLog] = useState<WarningEvent[]>([]);
   const [warningLogStorageReady, setWarningLogStorageReady] = useState(false);
@@ -711,6 +730,7 @@ export default function HomePage() {
 
   const mapRef = useRef<L.Map | null>(null);
   const sessionRef = useRef(session);
+  const sessionHistoryRef = useRef(sessionHistory);
   const warningStateRef = useRef<Record<string, { lastShown: number; shown: boolean }>>({});
   const offRouteStateRef = useRef({ outside: false, lastShown: 0 });
   const useSoundAndHapticRef = useRef(useSoundAndHaptic);
@@ -725,6 +745,8 @@ export default function HomePage() {
   const suppressSheetHandleClickRef = useRef(false);
   const lastLocationErrorToastRef = useRef<string | null>(null);
   const lastWarningToastRef = useRef<string | null>(null);
+  const historyPersistenceInFlightRef = useRef<string | null>(null);
+  const historyPersistenceGenerationRef = useRef(0);
   
   const simIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const simResumeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -735,14 +757,6 @@ export default function HomePage() {
   const functionalTestWarningIdsRef = useRef<Set<string>>(new Set());
   const maxProgressWaypointIndexRef = useRef(0);
   const lastPositionRef = useRef<SessionSample | null>(null);
-
-  useEffect(() => {
-    sessionRef.current = session;
-  }, [session]);
-
-  useEffect(() => {
-    lastPositionRef.current = lastPosition;
-  }, [lastPosition]);
 
   useEffect(() => {
     useSoundAndHapticRef.current = useSoundAndHaptic;
@@ -1119,9 +1133,11 @@ export default function HomePage() {
     });
   }, [warningPopup]);
 
-  // Load configuration & history from localStorage
+  // Load settings and verify the device-signed session history.
   useEffect(() => {
-    if (typeof window !== "undefined") {
+    let cancelled = false;
+
+    const loadLocalState = async () => {
       const hapticVal = readLocalStorageItem("joging-track:sound-haptic");
       if (hapticVal !== null) {
         setUseSoundAndHaptic(hapticVal === "true");
@@ -1133,13 +1149,65 @@ export default function HomePage() {
       removeLocalStorageItem("joging-track:achievement-name");
       removeLocalStorageItem("joging-track:certificate-name");
 
-      setSessionHistory(
-        parseSessionHistory(
-          readLocalStorageItem(TRACK_KEY),
-          SESSION_HISTORY_LIMIT
-        )
+      const restored = await restoreProtectedSessionHistory(
+        readLocalStorageItem(TRACK_KEY),
+        SESSION_HISTORY_LIMIT
       );
-    }
+      if (cancelled) {
+        return;
+      }
+
+      if (restored.status === "migrated" && restored.migratedValue) {
+        const migrationSaved = writeLocalStorageItem(
+          TRACK_KEY,
+          restored.migratedValue
+        );
+        if (!migrationSaved) {
+          enqueueToast({
+            title: "Migrasi Riwayat Belum Tersimpan",
+            message:
+              "Riwayat lama tetap tersedia saat ini, tetapi browser menolak penyimpanan signature perangkat.",
+            severity: "warning",
+          });
+        }
+      }
+
+      applySessionHistory(restored.history);
+      setSessionHistoryStorageReady(true);
+
+      if (restored.status === "migrated") {
+        enqueueToast({
+          title: "Riwayat Lokal Dilindungi",
+          message:
+            "Riwayat lama sudah ditandatangani dengan kunci perangkat ini.",
+          severity: "info",
+          autoHideMs: 5000,
+        });
+      } else if (restored.status === "tampered") {
+        enqueueToast({
+          title: "Riwayat Lokal Ditolak",
+          message:
+            restored.message ??
+            "Signature riwayat berubah sehingga data tidak dimuat.",
+          severity: "error",
+          autoHideMs: 9000,
+        });
+      } else if (restored.status === "unavailable") {
+        enqueueToast({
+          title: "Proteksi Riwayat Tidak Tersedia",
+          message:
+            restored.message ??
+            "Browser tidak dapat membuka kunci perangkat. Riwayat tidak dimuat.",
+          severity: "error",
+          autoHideMs: 9000,
+        });
+      }
+    };
+
+    void loadLocalState();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -1247,11 +1315,21 @@ export default function HomePage() {
   }, [systemNotificationPermission, track]);
 
   useEffect(() => {
-    const readSharedAchievement = () => {
+    let disposed = false;
+    let requestNumber = 0;
+
+    const readSharedAchievement = async () => {
+      const currentRequest = ++requestNumber;
       try {
         const hash = window.location.hash;
-        setSharedAchievementCollection(decodeAchievementCollectionHash(hash));
+        const decoded = await decodeAchievementCollectionHash(hash);
+        if (!disposed && currentRequest === requestNumber) {
+          setSharedAchievementCollection(decoded);
+        }
       } catch (error) {
+        if (disposed || currentRequest !== requestNumber) {
+          return;
+        }
         setSharedAchievementCollection(null);
         const message = error instanceof Error
           ? error.message
@@ -1264,10 +1342,14 @@ export default function HomePage() {
       }
     };
 
-    readSharedAchievement();
-    window.addEventListener("hashchange", readSharedAchievement);
+    const handleHashChange = () => {
+      void readSharedAchievement();
+    };
+    void readSharedAchievement();
+    window.addEventListener("hashchange", handleHashChange);
     return () => {
-      window.removeEventListener("hashchange", readSharedAchievement);
+      disposed = true;
+      window.removeEventListener("hashchange", handleHashChange);
     };
   }, []);
 
@@ -1378,13 +1460,17 @@ export default function HomePage() {
         const normalized = normalizeTrackPayload(rawTrack, trackId);
 
         setTrack(normalized);
-        setSession(createIdleSession(normalized.id));
+        applySession(createIdleSession(normalized.id), {
+          allowSessionReplacement: true,
+        });
       } catch (error) {
         if (!cancelled) {
           console.error(error);
           const fallbackTrack = normalizeTrackPayload(fallbackTrackPayload, "main");
           setTrack(fallbackTrack);
-          setSession(createIdleSession(fallbackTrack.id));
+          applySession(createIdleSession(fallbackTrack.id), {
+            allowSessionReplacement: true,
+          });
           enqueueToast({
             title: "Rute Cadangan Aktif",
             message: "Data rute utama gagal dimuat. Aplikasi menggunakan salinan rute lokal.",
@@ -1420,13 +1506,49 @@ export default function HomePage() {
     writeLocalStorageItem("joging-track:map-theme", next);
   };
 
-  const applySession = (next: RunSession) => {
-    setSession(next);
-    sessionRef.current = next;
+  const applySession = (
+    next: RunSession,
+    options: SessionTransitionOptions = {}
+  ): boolean => {
+    const hardened = hardenSessionTransition(
+      sessionRef.current,
+      next,
+      options
+    );
+    if (!hardened.valid) {
+      console.warn("Session state rejected:", hardened.reason);
+      enqueueToast({
+        title: "Perubahan Sesi Ditolak",
+        message: hardened.reason,
+        severity: "error",
+      });
+      return false;
+    }
+
+    setSession(hardened.session);
+    sessionRef.current = hardened.session;
+    return true;
+  };
+
+  const applySessionHistory = (next: RunSession[]): boolean => {
+    const hardened = hardenSessionHistory(next);
+    if (!hardened.valid) {
+      console.warn("Session history rejected:", hardened.reason);
+      enqueueToast({
+        title: "Perubahan Riwayat Ditolak",
+        message: hardened.reason,
+        severity: "error",
+      });
+      return false;
+    }
+
+    setSessionHistory(hardened.sessions);
+    sessionHistoryRef.current = hardened.sessions;
+    return true;
   };
 
   const onShareRunnerProfile = async () => {
-    if (!track || unlockedAchievements.length === 0) {
+    if (!track) {
       return;
     }
 
@@ -1434,9 +1556,15 @@ export default function HomePage() {
     setIsSharingRunnerProfile(true);
 
     try {
+      const trustedProgress = buildAchievementProgress(
+        sessionHistoryRef.current
+      );
+      const trustedSummary = summarizeAchievements(
+        sessionHistoryRef.current
+      );
       const payload = createAchievementCollectionSharePayload(
-        achievementProgress,
-        achievementSummary,
+        trustedProgress,
+        trustedSummary,
         ""
       );
       const result = await shareAchievementCollectionLink({
@@ -1475,7 +1603,7 @@ export default function HomePage() {
   };
 
   const onShareRunnerProfileImage = async () => {
-    if (!track || unlockedAchievements.length === 0) {
+    if (!track) {
       return;
     }
 
@@ -1483,12 +1611,18 @@ export default function HomePage() {
     setIsSharingProfileImage(true);
 
     try {
+      const trustedProgress = buildAchievementProgress(
+        sessionHistoryRef.current
+      );
+      const trustedSummary = summarizeAchievements(
+        sessionHistoryRef.current
+      );
       const payload = createAchievementCollectionSharePayload(
-        achievementProgress,
-        achievementSummary,
+        trustedProgress,
+        trustedSummary,
         ""
       );
-      const profileUrl = buildAchievementCollectionShareUrl(
+      const profileUrl = await buildAchievementCollectionShareUrl(
         window.location.href,
         payload
       );
@@ -1549,7 +1683,9 @@ export default function HomePage() {
       void closeRunSystemNotifications();
     }
     resetProgressTracking();
-    applySession(createIdleSession(track.id));
+    applySession(createIdleSession(track.id), {
+      allowSessionReplacement: true,
+    });
   };
 
   const requestFreshPosition = ({
@@ -2386,7 +2522,7 @@ export default function HomePage() {
     }
   };
 
-  const finishFunctionalTest = (current: RunSession) => {
+  const finishFunctionalTest = async (current: RunSession) => {
     if (!track) {
       return;
     }
@@ -2394,7 +2530,9 @@ export default function HomePage() {
     clearFunctionalTestTimers();
     const now = Date.now();
     const completedSession = createCompletedFunctionalTestSession(current, now);
-    applySession(completedSession);
+    const completionStateApplied = applySession(completedSession, {
+      allowTimingNormalization: true,
+    });
 
     const finalPosition = completedSession.samples.at(-1);
     const savedFinishPosition = completedSession.finishPosition;
@@ -2427,6 +2565,7 @@ export default function HomePage() {
         : `Sesi tidak berhasil melanjutkan progres setelah ${FUNCTIONAL_TEST_TARGET_LAPS} lap.`
     );
     const manualFinishWorks =
+      completionStateApplied &&
       completedSession.status === "finished" &&
       Boolean(completedSession.endedAt) &&
       completedRequiredLaps &&
@@ -2490,7 +2629,7 @@ export default function HomePage() {
       );
     } else {
       const historyUpdate = buildFunctionalTestHistoryUpdate(
-        sessionHistory,
+        sessionHistoryRef.current,
         completedSession,
         SESSION_HISTORY_LIMIT
       );
@@ -2506,14 +2645,18 @@ export default function HomePage() {
           );
         }
 
+        const protectedHistory = await protectSessionHistory(
+          historyUpdate.nextHistory,
+          SESSION_HISTORY_LIMIT
+        );
         const historySaved = writeLocalStorageItem(
           TRACK_KEY,
-          JSON.stringify(historyUpdate.nextHistory)
+          protectedHistory
         );
         if (!historySaved) {
           throw new Error("Browser menolak penyimpanan sesi uji.");
         }
-        setSessionHistory(historyUpdate.nextHistory);
+        applySessionHistory(historyUpdate.nextHistory);
 
         const newlyUnlockedTitles = historyUpdate.newlyUnlocked.map(
           (entry) => entry.definition.title
@@ -2563,7 +2706,7 @@ export default function HomePage() {
   };
 
   // Automated route simulation and functional test runner.
-  const startSimulation = () => {
+  const startSimulation = async () => {
     if (!track || track.waypoints.length === 0) {
       return;
     }
@@ -2621,16 +2764,37 @@ export default function HomePage() {
     );
 
     const storageTestKey = `joging-track:functional-test:${Date.now()}`;
-    const storageWriteWorks = writeLocalStorageItem(storageTestKey, "ok");
-    const storageWorks =
-      storageWriteWorks &&
-      readLocalStorageItem(storageTestKey) === "ok";
+    let storageWorks = false;
+    let storageMessage =
+      "Browser menolak localStorage, IndexedDB, atau WebCrypto.";
+    try {
+      const signedProbe = await protectSessionHistory([], 1);
+      const storageWriteWorks = writeLocalStorageItem(
+        storageTestKey,
+        signedProbe
+      );
+      const restoredProbe = await restoreProtectedSessionHistory(
+        readLocalStorageItem(storageTestKey),
+        1
+      );
+      storageWorks =
+        storageWriteWorks && restoredProbe.status === "verified";
+      if (storageWorks) {
+        storageMessage =
+          "Write, read, signature, dan cleanup penyimpanan lokal berhasil.";
+      } else if (restoredProbe.message) {
+        storageMessage = restoredProbe.message;
+      }
+    } catch (error) {
+      storageMessage =
+        error instanceof Error
+          ? error.message
+          : storageMessage;
+    }
     updateFunctionalTestResult(
       "local-storage",
       storageWorks ? "passed" : "failed",
-      storageWorks
-        ? "Write, read, dan cleanup localStorage berhasil."
-        : "Browser menolak akses localStorage."
+      storageMessage
     );
     removeLocalStorageItem(storageTestKey);
 
@@ -2640,18 +2804,23 @@ export default function HomePage() {
       const diagnosticPace = Math.round(
         (diagnosticDuration / diagnosticDistance) * 1000
       );
-      const diagnosticUrl = buildAchievementCollectionShareUrl(window.location.href, {
-        runnerName: "",
-        unlockedAchievementIds: ["first-run"],
-        completedRuns: 1,
-        totalDistanceMeters: diagnosticDistance,
-        totalDurationSeconds: diagnosticDuration,
-        averagePaceSecondsPerKm: diagnosticPace,
-        bestPaceSecondsPerKm: diagnosticPace,
-        longestRunMeters: diagnosticDistance,
-        latestRunAt: Date.now(),
-      });
-      const decoded = decodeAchievementCollectionHash(new URL(diagnosticUrl).hash);
+      const diagnosticUrl = await buildAchievementCollectionShareUrl(
+        window.location.href,
+        {
+          runnerName: "",
+          unlockedAchievementIds: ["first-run"],
+          completedRuns: 1,
+          totalDistanceMeters: diagnosticDistance,
+          totalDurationSeconds: diagnosticDuration,
+          averagePaceSecondsPerKm: diagnosticPace,
+          bestPaceSecondsPerKm: diagnosticPace,
+          longestRunMeters: diagnosticDistance,
+          latestRunAt: Date.now(),
+        }
+      );
+      const decoded = await decodeAchievementCollectionHash(
+        new URL(diagnosticUrl).hash
+      );
       const shareProtocolWorks =
         decoded?.completedRuns === 1 &&
         decoded.unlockedAchievementIds.includes("first-run");
@@ -2670,6 +2839,10 @@ export default function HomePage() {
       );
     }
 
+    if (!functionalTestActiveRef.current) {
+      return;
+    }
+
     const testSession: RunSession = {
       ...createIdleSession(track.id),
       sessionId: `functional-test-${Date.now()}`,
@@ -2677,8 +2850,21 @@ export default function HomePage() {
       startedAt: Date.now(),
       persisted: true,
     };
-    applySession(testSession);
-    updateFunctionalTestResult("session-start", "passed", "State sesi berubah menjadi running.");
+    const testSessionStarted = applySession(testSession);
+    updateFunctionalTestResult(
+      "session-start",
+      testSessionStarted ? "passed" : "failed",
+      testSessionStarted
+        ? "State sesi tervalidasi dan berubah menjadi running."
+        : "Validator menolak state awal simulasi."
+    );
+    if (!testSessionStarted) {
+      functionalTestActiveRef.current = false;
+      isSimulatingRef.current = false;
+      setIsSimulating(false);
+      setFunctionalTestState("failed");
+      return;
+    }
     updateFunctionalTestResult("progress-metrics", "running", "Menunggu pergerakan rute.");
     updateFunctionalTestResult("pause-resume", "running", "Dijadwalkan pada sepertiga rute.");
     updateFunctionalTestResult("warning-engine", "running", "Menunggu zona uji.");
@@ -2720,7 +2906,7 @@ export default function HomePage() {
           "failed",
           `Progres tidak mencapai ${FUNCTIONAL_TEST_TARGET_LAPS} lap dalam batas simulasi.`
         );
-        finishFunctionalTest(sessionRef.current);
+        void finishFunctionalTest(sessionRef.current);
         return;
       }
 
@@ -2859,7 +3045,7 @@ export default function HomePage() {
         trackDistance * FUNCTIONAL_TEST_TARGET_LAPS;
 
       if (reachedTargetLaps && continuedAfterTarget) {
-        finishFunctionalTest(next);
+        void finishFunctionalTest(next);
       } else {
         simIndexRef.current += 1;
       }
@@ -3287,6 +3473,12 @@ export default function HomePage() {
 
   // Persist paused snapshots and completed sessions in local history.
   useEffect(() => {
+    if (session !== sessionRef.current) {
+      console.warn(
+        "Ignoring a React session value that did not pass the state validator."
+      );
+      return;
+    }
     if (session.sessionId.startsWith("functional-test-")) {
       return;
     }
@@ -3295,38 +3487,95 @@ export default function HomePage() {
       ? Boolean(session.pausedAt)
       : Boolean(session.endedAt);
 
-    if (!isPersistable || session.persisted || !hasStatusTimestamp || !track) {
+    if (
+      !sessionHistoryStorageReady ||
+      !isPersistable ||
+      session.persisted ||
+      !hasStatusTimestamp ||
+      !track
+    ) {
       return;
     }
 
+    const persistenceKey = `${session.sessionId}:${session.status}:${
+      session.pausedAt ?? session.endedAt ?? 0
+    }`;
+    if (historyPersistenceInFlightRef.current === persistenceKey) {
+      return;
+    }
+    historyPersistenceInFlightRef.current = persistenceKey;
+    const persistenceGeneration =
+      ++historyPersistenceGenerationRef.current;
+
     const nextHistory = addSessionToHistory(
-      sessionHistory,
+      sessionHistoryRef.current,
       session,
       SESSION_HISTORY_LIMIT
     );
 
-    const historySaved = writeLocalStorageItem(
-      TRACK_KEY,
-      JSON.stringify(nextHistory)
-    );
-    if (historySaved) {
-      setSessionHistory(nextHistory);
-      applySession({ ...session, persisted: true });
-      enqueueToast({
-        title: "Sesi Tersimpan",
-        message: session.status === "paused"
-          ? "Progres saat dijeda sudah disimpan di Riwayat."
-          : "Hasil lari terbaru sudah disimpan di Riwayat.",
-        severity: "info",
-      });
-    } else {
-      enqueueToast({
-        title: "Riwayat Belum Tersimpan",
-        message: "Penyimpanan browser tidak tersedia atau penuh. Kosongkan ruang lalu coba lagi.",
-        severity: "error",
-      });
-    }
-  }, [session, sessionHistory, track]);
+    const persistHistory = async () => {
+      try {
+        const protectedHistory = await protectSessionHistory(
+          nextHistory,
+          SESSION_HISTORY_LIMIT
+        );
+        if (
+          persistenceGeneration !==
+          historyPersistenceGenerationRef.current
+        ) {
+          return;
+        }
+        const historySaved = writeLocalStorageItem(
+          TRACK_KEY,
+          protectedHistory
+        );
+        if (!historySaved) {
+          throw new Error(
+            "Penyimpanan browser tidak tersedia atau penuh."
+          );
+        }
+
+        applySessionHistory(nextHistory);
+        const current = sessionRef.current;
+        if (
+          current.sessionId === session.sessionId &&
+          current.status === session.status &&
+          current.pausedAt === session.pausedAt &&
+          current.endedAt === session.endedAt &&
+          !current.persisted
+        ) {
+          applySession({ ...current, persisted: true });
+        }
+        enqueueToast({
+          title: "Sesi Tersimpan Aman",
+          message:
+            session.status === "paused"
+              ? "Progres jeda ditandatangani dan disimpan di Riwayat."
+              : "Hasil lari ditandatangani dan disimpan di Riwayat.",
+          severity: "info",
+        });
+      } catch (error) {
+        enqueueToast({
+          title: "Riwayat Belum Tersimpan",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Kunci perangkat atau penyimpanan browser tidak tersedia.",
+          severity: "error",
+        });
+      } finally {
+        if (historyPersistenceInFlightRef.current === persistenceKey) {
+          historyPersistenceInFlightRef.current = null;
+        }
+      }
+    };
+
+    void persistHistory();
+  }, [
+    session,
+    sessionHistoryStorageReady,
+    track,
+  ]);
 
   const onRecenter = () => {
     setFollowUser(true);
@@ -3535,7 +3784,12 @@ export default function HomePage() {
             routePoints={track?.waypoints ?? []}
           />
           <p className="shared-run-summary-note">
-            Dibagikan dari Singapadu Tengah Jogging.
+            <Shield size={13} aria-hidden="true" />
+            <span>
+              Signature data utuh · kunci{" "}
+              {sharedAchievementCollection.signerFingerprint}. Ini
+              memverifikasi payload, bukan identitas pemilik perangkat.
+            </span>
           </p>
         </section>
       ) : null}
@@ -4452,7 +4706,9 @@ export default function HomePage() {
                     <button
                       type="button"
                       className="btn-functional-test start"
-                      onClick={startSimulation}
+                      onClick={() => {
+                        void startSimulation();
+                      }}
                       disabled={!track}
                     >
                       {functionalTestState === "idle" ? (
@@ -4484,8 +4740,10 @@ export default function HomePage() {
                     className="btn-danger" 
                     onClick={() => {
                       if (confirm("Apakah Anda yakin ingin menghapus semua riwayat sesi lari lokal?")) {
+                        historyPersistenceGenerationRef.current += 1;
+                        historyPersistenceInFlightRef.current = null;
                         removeLocalStorageItem(TRACK_KEY);
-                        setSessionHistory([]);
+                        applySessionHistory([]);
                         resetSession();
                       }
                     }}
