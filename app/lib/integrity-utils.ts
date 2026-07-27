@@ -3,9 +3,17 @@ const INTEGRITY_STORE_NAME = "device-identity";
 const INTEGRITY_IDENTITY_KEY = "primary";
 const INTEGRITY_DOMAIN = "Singapadu Tengah Run Track";
 const PUBLIC_KEY_BYTES = 65;
+const COMPRESSED_PUBLIC_KEY_BYTES = 33;
 const ECDSA_SIGNATURE_BYTES = 64;
 const FINGERPRINT_BYTES = 12;
 
+const P256_PRIME = BigInt(
+  "0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff"
+);
+const P256_CURVE_A = P256_PRIME - BigInt(3);
+const P256_CURVE_B = BigInt(
+  "0x5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b"
+);
 const P256_ORDER = BigInt(
   "0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551"
 );
@@ -110,6 +118,89 @@ const bigIntToFixedBytes = (value: bigint, length: number): Uint8Array => {
     throw new Error("Nilai signature berada di luar batas kurva.");
   }
   return bytes;
+};
+
+const modulo = (value: bigint, modulus: bigint): bigint => {
+  const remainder = value % modulus;
+  return remainder >= BigInt(0) ? remainder : remainder + modulus;
+};
+
+const modularExponentiation = (
+  base: bigint,
+  exponent: bigint,
+  modulus: bigint
+): bigint => {
+  let result = BigInt(1);
+  let factor = modulo(base, modulus);
+  let remaining = exponent;
+  while (remaining > BigInt(0)) {
+    if (remaining % BigInt(2) === BigInt(1)) {
+      result = (result * factor) % modulus;
+    }
+    factor = (factor * factor) % modulus;
+    remaining /= BigInt(2);
+  }
+  return result;
+};
+
+export const compressDevicePublicKey = (
+  publicKeyBytes: Uint8Array
+): Uint8Array => {
+  if (
+    publicKeyBytes.length !== PUBLIC_KEY_BYTES ||
+    publicKeyBytes[0] !== 0x04
+  ) {
+    throw new Error("Kunci publik perangkat tidak valid.");
+  }
+  const compressed = new Uint8Array(COMPRESSED_PUBLIC_KEY_BYTES);
+  compressed[0] = 0x02 | (publicKeyBytes[64] & 0x01);
+  compressed.set(publicKeyBytes.subarray(1, 33), 1);
+  return compressed;
+};
+
+export const decompressDevicePublicKey = (
+  compressedKeyBytes: Uint8Array
+): Uint8Array => {
+  if (
+    compressedKeyBytes.length !== COMPRESSED_PUBLIC_KEY_BYTES ||
+    (compressedKeyBytes[0] !== 0x02 &&
+      compressedKeyBytes[0] !== 0x03)
+  ) {
+    throw new Error("Kunci publik ringkas tidak valid.");
+  }
+
+  const xBytes = compressedKeyBytes.subarray(1);
+  const x = bytesToBigInt(xBytes);
+  if (x >= P256_PRIME) {
+    throw new Error("Koordinat kunci publik berada di luar kurva.");
+  }
+  const ySquared = modulo(
+    x * x * x + P256_CURVE_A * x + P256_CURVE_B,
+    P256_PRIME
+  );
+  let y = modularExponentiation(
+    ySquared,
+    (P256_PRIME + BigInt(1)) / BigInt(4),
+    P256_PRIME
+  );
+  if ((y * y) % P256_PRIME !== ySquared) {
+    throw new Error("Kunci publik ringkas tidak berada pada kurva.");
+  }
+
+  const expectedOdd = compressedKeyBytes[0] === 0x03;
+  const isOdd = y % BigInt(2) === BigInt(1);
+  if (y === BigInt(0) && expectedOdd) {
+    throw new Error("Paritas kunci publik ringkas tidak valid.");
+  }
+  if (isOdd !== expectedOdd) {
+    y = P256_PRIME - y;
+  }
+
+  const publicKeyBytes = new Uint8Array(PUBLIC_KEY_BYTES);
+  publicKeyBytes[0] = 0x04;
+  publicKeyBytes.set(xBytes, 1);
+  publicKeyBytes.set(bigIntToFixedBytes(y, 32), 33);
+  return publicKeyBytes;
 };
 
 const canonicalizeSignature = (signature: Uint8Array): Uint8Array => {
@@ -458,4 +549,6 @@ export const verifyIntegrityPayload = async ({
 };
 
 export const INTEGRITY_PUBLIC_KEY_BYTES = PUBLIC_KEY_BYTES;
+export const INTEGRITY_COMPACT_PUBLIC_KEY_BYTES =
+  COMPRESSED_PUBLIC_KEY_BYTES;
 export const INTEGRITY_SIGNATURE_BYTES = ECDSA_SIGNATURE_BYTES;

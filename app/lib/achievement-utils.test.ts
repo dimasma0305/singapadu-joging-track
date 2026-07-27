@@ -104,7 +104,7 @@ describe("compact runner-profile share protocol", () => {
     );
 
     expect(token).toMatch(/^[A-Za-z0-9_-]+$/);
-    expect(token.length).toBeLessThan(260);
+    expect(token.length).toBeLessThan(180);
     expect(decoded.completedRuns).toBe(10);
     expect(decoded.totalDistanceMeters).toBe(32_000);
     expect(decoded.totalDurationSeconds).toBe(18_000);

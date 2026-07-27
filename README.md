@@ -48,7 +48,8 @@ Profil memakai identitas netral **Pelari Singapadu** dan tidak memiliki input na
 
 Payload memakai format biner kanonis tanpa field versi: varint, bitmask
 achievement, kuantisasi angka, public key perangkat, signature ECDSA P-256, dan
-Base64URL tanpa padding. Browser penerima memverifikasi signature sebelum
+Base64URL tanpa padding. Public key dikompresi menjadi 33 byte di URL lalu
+direkonstruksi sebelum verifikasi. Browser penerima memverifikasi signature sebelum
 membaca data. Fragmen tidak dikirim ke server dan seluruh proses tetap berjalan
 di sisi klien. Tombol
 **Bagikan PNG** membuat artwork portrait 1080 × 1350; di perangkat yang mendukung

@@ -1,12 +1,14 @@
 import type { RunSession } from "./types";
 import { formatDistance, formatDuration, formatPace } from "./track-utils";
 import {
+  compressDevicePublicKey,
   decodeBase64UrlBytes,
+  decompressDevicePublicKey,
   encodeBase64UrlBytes,
   fingerprintPublicKey,
   getOrCreateDeviceSigningIdentity,
   importDeviceVerificationKey,
-  INTEGRITY_PUBLIC_KEY_BYTES,
+  INTEGRITY_COMPACT_PUBLIC_KEY_BYTES,
   INTEGRITY_SIGNATURE_BYTES,
   signIntegrityPayload,
   verifyIntegrityPayload,
@@ -95,7 +97,8 @@ const MAX_TOKEN_LENGTH = 480;
 const MAX_ACHIEVEMENT_DAY_OFFSET = 16_383;
 const MAX_DURATION_DECASECONDS = 100_000_000;
 const SIGNED_TOKEN_TRAILER_BYTES =
-  INTEGRITY_PUBLIC_KEY_BYTES + INTEGRITY_SIGNATURE_BYTES;
+  INTEGRITY_COMPACT_PUBLIC_KEY_BYTES +
+  INTEGRITY_SIGNATURE_BYTES;
 
 // The array order is part of the canonical signed payload. Reordering an entry
 // would change the meaning of existing signed links, so this order is immutable.
@@ -490,16 +493,19 @@ export const encodeAchievementCollectionShare = async (
     payload: payloadBytes,
     purpose: "profile-share",
   });
+  const compactPublicKey = compressDevicePublicKey(
+    identity.publicKeyBytes
+  );
   const tokenBytes = new Uint8Array(
     payloadBytes.length +
-      identity.publicKeyBytes.length +
+      compactPublicKey.length +
       signature.length
   );
   tokenBytes.set(payloadBytes, 0);
-  tokenBytes.set(identity.publicKeyBytes, payloadBytes.length);
+  tokenBytes.set(compactPublicKey, payloadBytes.length);
   tokenBytes.set(
     signature,
-    payloadBytes.length + identity.publicKeyBytes.length
+    payloadBytes.length + compactPublicKey.length
   );
   return encodeBase64UrlBytes(tokenBytes);
 };
@@ -513,9 +519,13 @@ export const decodeAchievementCollectionShare = async (
   }
 
   const dataEnd = bytes.length - SIGNED_TOKEN_TRAILER_BYTES;
-  const publicKeyEnd = dataEnd + INTEGRITY_PUBLIC_KEY_BYTES;
+  const publicKeyEnd =
+    dataEnd + INTEGRITY_COMPACT_PUBLIC_KEY_BYTES;
   const payloadBytes = bytes.slice(0, dataEnd);
-  const publicKeyBytes = bytes.slice(dataEnd, publicKeyEnd);
+  const compactPublicKey = bytes.slice(dataEnd, publicKeyEnd);
+  const publicKeyBytes = decompressDevicePublicKey(
+    compactPublicKey
+  );
   const signature = bytes.slice(publicKeyEnd);
   const publicKey = await importDeviceVerificationKey(publicKeyBytes);
   const signatureValid = await verifyIntegrityPayload({
