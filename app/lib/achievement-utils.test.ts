@@ -104,7 +104,7 @@ describe("compact runner-profile share protocol", () => {
     );
 
     expect(token).toMatch(/^[A-Za-z0-9_-]+$/);
-    expect(token.length).toBeLessThan(180);
+    expect(token.length).toBeLessThan(145);
     expect(decoded.completedRuns).toBe(10);
     expect(decoded.totalDistanceMeters).toBe(32_000);
     expect(decoded.totalDurationSeconds).toBe(18_000);
@@ -122,8 +122,13 @@ describe("compact runner-profile share protocol", () => {
     expect(decoded.integrityVerified).toBe(true);
     expect(decoded.signerFingerprint).toBe(identity.fingerprint);
     expect("protocolVersion" in decoded).toBe(false);
+    expect(new URL(url).hash).not.toStartWith("#p=");
     expect(
       (await decodeAchievementCollectionHash(new URL(url).hash))?.runnerName
+    ).toBe("Made Dimas");
+    expect(
+      (await decodeAchievementCollectionHash(`#p=${token}`))
+        ?.runnerName
     ).toBe("Made Dimas");
     expect(await decodeAchievementCollectionHash("#section")).toBeNull();
   });
@@ -154,5 +159,20 @@ describe("compact runner-profile share protocol", () => {
         "AQEC_wLCAsgGvgHAAd4SAKjJ"
       )
     ).rejects.toThrow("Payload ringkasan achievement terlalu pendek");
+  });
+
+  test("keeps previously shared compact-key links readable", async () => {
+    const legacySignedToken =
+      "AQHAAWD0A_QDwAHfEgACMbjJfew6VAdMhHqXGA7VfQcGppibb1DoHhJ4_DCe_pM4fGuWnNSYT8TMORKpjku0ZxCSWr3KTjyWDI4mVRLgLjEDHeNJsxhD6UirS-JJdGwCrDF2E2W4OPh8LjBtmxIt";
+    const decoded = await decodeAchievementCollectionShare(
+      legacySignedToken
+    );
+
+    expect(decoded.completedRuns).toBe(1);
+    expect(decoded.totalDistanceMeters).toBe(1920);
+    expect(decoded.integrityVerified).toBe(true);
+    expect(decoded.signerFingerprint).toBe(
+      "rMrzIU5EiqAyAw1A"
+    );
   });
 });

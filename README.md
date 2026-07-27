@@ -42,16 +42,17 @@ Buka: `http://localhost:3000/?track=main`
 ## Profil achievement yang dapat dibagikan
 
 Tombol share hanya tersedia pada profil lengkap, bukan pada achievement
-individual. Fragmen `#p=<token>` membawa seluruh Trophy Case, jumlah run, total
+individual. Fragmen `#<token>` membawa seluruh Trophy Case, jumlah run, total
 kilometer, durasi, pace rata-rata, best pace, run terjauh, dan tanggal.
 Profil memakai identitas netral **Pelari Singapadu** dan tidak memiliki input nama.
 
 Payload memakai format biner kanonis tanpa field versi: varint, bitmask
-achievement, kuantisasi angka, public key perangkat, signature ECDSA P-256, dan
-Base64URL tanpa padding. Public key dikompresi menjadi 33 byte di URL lalu
-direkonstruksi sebelum verifikasi. Browser penerima memverifikasi signature sebelum
-membaca data. Fragmen tidak dikirim ke server dan seluruh proses tetap berjalan
-di sisi klien. Tombol
+achievement, kuantisasi angka, fingerprint perangkat 12 byte, signature ECDSA
+P-256, dan Base64URL tanpa padding. Browser penerima memulihkan kandidat public
+key dari payload dan signature, mencocokkan fingerprint, lalu memverifikasi ulang
+signature dengan WebCrypto sebelum membaca data. Link signed lama yang masih
+memakai `#p=` dan membawa public key terkompresi tetap dapat dibuka. Fragmen tidak dikirim ke server
+dan seluruh proses tetap berjalan di sisi klien. Tombol
 **Bagikan PNG** membuat artwork portrait 1080 × 1350; di perangkat yang mendukung
 Web Share file akan diteruskan ke aplikasi sosial, sedangkan browser lain
 mengunduh berkas PNG. Tampilan URL dan PNG memuat garis rute dari data lintasan,

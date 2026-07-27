@@ -18,6 +18,12 @@ const P256_ORDER = BigInt(
   "0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551"
 );
 const P256_HALF_ORDER = P256_ORDER / BigInt(2);
+const P256_GENERATOR_X = BigInt(
+  "0x6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296"
+);
+const P256_GENERATOR_Y = BigInt(
+  "0x4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5"
+);
 
 export type IntegrityPurpose = "profile-share" | "session-history";
 
@@ -29,9 +35,26 @@ export type DeviceSigningIdentity = {
   created: boolean;
 };
 
+export type RecoveredIntegrityPublicKey = {
+  publicKey: CryptoKey;
+  publicKeyBytes: Uint8Array;
+  fingerprint: string;
+};
+
 type StoredDeviceIdentity = {
   privateKey: CryptoKey;
   publicKeyBytes: ArrayBuffer;
+};
+
+type P256AffinePoint = {
+  x: bigint;
+  y: bigint;
+};
+
+type P256JacobianPoint = {
+  x: bigint;
+  y: bigint;
+  z: bigint;
 };
 
 let identityPromise: Promise<DeviceSigningIdentity> | null = null;
@@ -141,6 +164,194 @@ const modularExponentiation = (
     remaining /= BigInt(2);
   }
   return result;
+};
+
+const modularInverse = (
+  value: bigint,
+  modulus: bigint
+): bigint => {
+  let oldR = modulo(value, modulus);
+  let remainder = modulus;
+  let oldCoefficient = BigInt(1);
+  let coefficient = BigInt(0);
+
+  while (remainder !== BigInt(0)) {
+    const quotient = oldR / remainder;
+    [oldR, remainder] = [
+      remainder,
+      oldR - quotient * remainder,
+    ];
+    [oldCoefficient, coefficient] = [
+      coefficient,
+      oldCoefficient - quotient * coefficient,
+    ];
+  }
+  if (oldR !== BigInt(1)) {
+    throw new Error("Nilai kurva tidak memiliki invers modular.");
+  }
+  return modulo(oldCoefficient, modulus);
+};
+
+const P256_INFINITY: P256JacobianPoint = {
+  x: BigInt(0),
+  y: BigInt(1),
+  z: BigInt(0),
+};
+
+const toJacobianPoint = (
+  point: P256AffinePoint
+): P256JacobianPoint => ({
+  x: point.x,
+  y: point.y,
+  z: BigInt(1),
+});
+
+const doubleJacobianPoint = (
+  point: P256JacobianPoint
+): P256JacobianPoint => {
+  if (point.z === BigInt(0) || point.y === BigInt(0)) {
+    return P256_INFINITY;
+  }
+
+  const xx = modulo(point.x * point.x, P256_PRIME);
+  const yy = modulo(point.y * point.y, P256_PRIME);
+  const yyyy = modulo(yy * yy, P256_PRIME);
+  const zz = modulo(point.z * point.z, P256_PRIME);
+  const s = modulo(
+    BigInt(2) *
+      (modulo((point.x + yy) * (point.x + yy), P256_PRIME) -
+        xx -
+        yyyy),
+    P256_PRIME
+  );
+  const m = modulo(
+    BigInt(3) * xx +
+      P256_CURVE_A * modulo(zz * zz, P256_PRIME),
+    P256_PRIME
+  );
+  const x = modulo(m * m - BigInt(2) * s, P256_PRIME);
+  const y = modulo(
+    m * (s - x) - BigInt(8) * yyyy,
+    P256_PRIME
+  );
+  const z = modulo(
+    BigInt(2) * point.y * point.z,
+    P256_PRIME
+  );
+  return { x, y, z };
+};
+
+const addJacobianPoints = (
+  left: P256JacobianPoint,
+  right: P256JacobianPoint
+): P256JacobianPoint => {
+  if (left.z === BigInt(0)) {
+    return right;
+  }
+  if (right.z === BigInt(0)) {
+    return left;
+  }
+
+  const leftZSquared = modulo(left.z * left.z, P256_PRIME);
+  const rightZSquared = modulo(right.z * right.z, P256_PRIME);
+  const leftU = modulo(left.x * rightZSquared, P256_PRIME);
+  const rightU = modulo(right.x * leftZSquared, P256_PRIME);
+  const leftS = modulo(
+    left.y * right.z * rightZSquared,
+    P256_PRIME
+  );
+  const rightS = modulo(
+    right.y * left.z * leftZSquared,
+    P256_PRIME
+  );
+
+  if (leftU === rightU) {
+    return leftS === rightS
+      ? doubleJacobianPoint(left)
+      : P256_INFINITY;
+  }
+
+  const h = modulo(rightU - leftU, P256_PRIME);
+  const i = modulo(
+    BigInt(4) * h * h,
+    P256_PRIME
+  );
+  const j = modulo(h * i, P256_PRIME);
+  const r = modulo(
+    BigInt(2) * (rightS - leftS),
+    P256_PRIME
+  );
+  const v = modulo(leftU * i, P256_PRIME);
+  const x = modulo(
+    r * r - j - BigInt(2) * v,
+    P256_PRIME
+  );
+  const y = modulo(
+    r * (v - x) - BigInt(2) * leftS * j,
+    P256_PRIME
+  );
+  const z = modulo(
+    (modulo(
+      (left.z + right.z) * (left.z + right.z),
+      P256_PRIME
+    ) -
+      leftZSquared -
+      rightZSquared) *
+      h,
+    P256_PRIME
+  );
+  return { x, y, z };
+};
+
+const multiplyJacobianPoint = (
+  point: P256AffinePoint,
+  scalar: bigint
+): P256JacobianPoint => {
+  if (scalar < BigInt(0)) {
+    throw new Error("Skalar kurva tidak boleh negatif.");
+  }
+  let result = P256_INFINITY;
+  let addend = toJacobianPoint(point);
+  let remaining = scalar;
+
+  while (remaining > BigInt(0)) {
+    if (remaining % BigInt(2) === BigInt(1)) {
+      result = addJacobianPoints(result, addend);
+    }
+    addend = doubleJacobianPoint(addend);
+    remaining /= BigInt(2);
+  }
+  return result;
+};
+
+const toAffinePoint = (
+  point: P256JacobianPoint
+): P256AffinePoint | null => {
+  if (point.z === BigInt(0)) {
+    return null;
+  }
+  const inverseZ = modularInverse(point.z, P256_PRIME);
+  const inverseZSquared = modulo(
+    inverseZ * inverseZ,
+    P256_PRIME
+  );
+  return {
+    x: modulo(point.x * inverseZSquared, P256_PRIME),
+    y: modulo(
+      point.y * inverseZSquared * inverseZ,
+      P256_PRIME
+    ),
+  };
+};
+
+const encodeAffinePublicKey = (
+  point: P256AffinePoint
+): Uint8Array => {
+  const bytes = new Uint8Array(PUBLIC_KEY_BYTES);
+  bytes[0] = 0x04;
+  bytes.set(bigIntToFixedBytes(point.x, 32), 1);
+  bytes.set(bigIntToFixedBytes(point.y, 32), 33);
+  return bytes;
 };
 
 export const compressDevicePublicKey = (
@@ -253,13 +464,22 @@ const buildSignedMessage = (
 export const fingerprintPublicKey = async (
   publicKeyBytes: Uint8Array
 ): Promise<string> => {
+  const fingerprint = await fingerprintPublicKeyBytes(
+    publicKeyBytes
+  );
+  return encodeBase64UrlBytes(fingerprint);
+};
+
+export const fingerprintPublicKeyBytes = async (
+  publicKeyBytes: Uint8Array
+): Promise<Uint8Array> => {
   const digest = new Uint8Array(
     await resolveWebCrypto().subtle.digest(
       "SHA-256",
       copyToWebCryptoBuffer(publicKeyBytes)
     )
   );
-  return encodeBase64UrlBytes(digest.subarray(0, FINGERPRINT_BYTES));
+  return digest.slice(0, FINGERPRINT_BYTES);
 };
 
 export const importDeviceVerificationKey = async (
@@ -548,7 +768,145 @@ export const verifyIntegrityPayload = async ({
   }
 };
 
+const bytesEqual = (
+  left: Uint8Array,
+  right: Uint8Array
+): boolean => {
+  if (left.length !== right.length) {
+    return false;
+  }
+  let difference = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    difference |= left[index] ^ right[index];
+  }
+  return difference === 0;
+};
+
+const recoverP256PublicKeyFromDigest = ({
+  digest,
+  signature,
+  recoveryId,
+}: {
+  digest: Uint8Array;
+  signature: Uint8Array;
+  recoveryId: number;
+}): Uint8Array => {
+  const r = bytesToBigInt(signature.subarray(0, 32));
+  const s = bytesToBigInt(signature.subarray(32));
+  const x =
+    r + BigInt(recoveryId >> 1) * P256_ORDER;
+  if (x >= P256_PRIME) {
+    throw new Error("Koordinat recovery berada di luar kurva.");
+  }
+
+  const compressedRecoveryPoint = new Uint8Array(
+    COMPRESSED_PUBLIC_KEY_BYTES
+  );
+  compressedRecoveryPoint[0] =
+    recoveryId % 2 === 0 ? 0x02 : 0x03;
+  compressedRecoveryPoint.set(bigIntToFixedBytes(x, 32), 1);
+  const recoveryPointBytes = decompressDevicePublicKey(
+    compressedRecoveryPoint
+  );
+  const recoveryPoint: P256AffinePoint = {
+    x: bytesToBigInt(recoveryPointBytes.subarray(1, 33)),
+    y: bytesToBigInt(recoveryPointBytes.subarray(33, 65)),
+  };
+
+  const inverseR = modularInverse(r, P256_ORDER);
+  const digestValue = bytesToBigInt(digest);
+  const generatorScalar = modulo(
+    -digestValue * inverseR,
+    P256_ORDER
+  );
+  const recoveryScalar = modulo(s * inverseR, P256_ORDER);
+  const recoveredPoint = toAffinePoint(
+    addJacobianPoints(
+      multiplyJacobianPoint(
+        {
+          x: P256_GENERATOR_X,
+          y: P256_GENERATOR_Y,
+        },
+        generatorScalar
+      ),
+      multiplyJacobianPoint(recoveryPoint, recoveryScalar)
+    )
+  );
+  if (!recoveredPoint) {
+    throw new Error("Kunci publik tidak dapat dipulihkan.");
+  }
+  return encodeAffinePublicKey(recoveredPoint);
+};
+
+export const recoverIntegrityPublicKeyByFingerprint = async ({
+  payload,
+  purpose,
+  signature,
+  expectedFingerprint,
+}: {
+  payload: Uint8Array;
+  purpose: IntegrityPurpose;
+  signature: Uint8Array;
+  expectedFingerprint: Uint8Array;
+}): Promise<RecoveredIntegrityPublicKey> => {
+  if (
+    expectedFingerprint.length !== FINGERPRINT_BYTES ||
+    !isCanonicalSignature(signature)
+  ) {
+    throw new Error(
+      "Signature atau fingerprint ringkasan achievement tidak cocok."
+    );
+  }
+
+  const digest = new Uint8Array(
+    await resolveWebCrypto().subtle.digest(
+      "SHA-256",
+      copyToWebCryptoBuffer(buildSignedMessage(purpose, payload))
+    )
+  );
+
+  for (let recoveryId = 0; recoveryId < 4; recoveryId += 1) {
+    try {
+      const publicKeyBytes = recoverP256PublicKeyFromDigest({
+        digest,
+        signature,
+        recoveryId,
+      });
+      const fingerprintBytes = await fingerprintPublicKeyBytes(
+        publicKeyBytes
+      );
+      if (!bytesEqual(fingerprintBytes, expectedFingerprint)) {
+        continue;
+      }
+
+      const publicKey = await importDeviceVerificationKey(
+        publicKeyBytes
+      );
+      const signatureValid = await verifyIntegrityPayload({
+        publicKey,
+        payload,
+        purpose,
+        signature,
+      });
+      if (signatureValid) {
+        return {
+          publicKey,
+          publicKeyBytes,
+          fingerprint: encodeBase64UrlBytes(fingerprintBytes),
+        };
+      }
+    } catch {
+      // Some recovery IDs do not map to a point on P-256.
+    }
+  }
+
+  throw new Error(
+    "Signature atau fingerprint ringkasan achievement tidak cocok."
+  );
+};
+
 export const INTEGRITY_PUBLIC_KEY_BYTES = PUBLIC_KEY_BYTES;
 export const INTEGRITY_COMPACT_PUBLIC_KEY_BYTES =
   COMPRESSED_PUBLIC_KEY_BYTES;
 export const INTEGRITY_SIGNATURE_BYTES = ECDSA_SIGNATURE_BYTES;
+export const INTEGRITY_FINGERPRINT_BYTES = FINGERPRINT_BYTES;

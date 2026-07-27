@@ -1,15 +1,17 @@
 import type { RunSession } from "./types";
 import { formatDistance, formatDuration, formatPace } from "./track-utils";
 import {
-  compressDevicePublicKey,
   decodeBase64UrlBytes,
   decompressDevicePublicKey,
   encodeBase64UrlBytes,
   fingerprintPublicKey,
+  fingerprintPublicKeyBytes,
   getOrCreateDeviceSigningIdentity,
   importDeviceVerificationKey,
   INTEGRITY_COMPACT_PUBLIC_KEY_BYTES,
+  INTEGRITY_FINGERPRINT_BYTES,
   INTEGRITY_SIGNATURE_BYTES,
+  recoverIntegrityPublicKeyByFingerprint,
   signIntegrityPayload,
   verifyIntegrityPayload,
   type DeviceSigningIdentity,
@@ -86,7 +88,7 @@ export type DecodedAchievementCollectionShare = AchievementCollectionSharePayloa
   signerFingerprint: string;
 };
 
-const COLLECTION_SHARE_HASH_PREFIX = "#p=";
+const LEGACY_COLLECTION_SHARE_HASH_PREFIX = "#p=";
 const DAY_MILLISECONDS = 86_400_000;
 const PROTOCOL_EPOCH_DAY = Math.floor(Date.UTC(2020, 0, 1) / DAY_MILLISECONDS);
 const MAX_RUNS = 100_000;
@@ -96,9 +98,19 @@ const MAX_NAME_BYTES = 160;
 const MAX_TOKEN_LENGTH = 480;
 const MAX_ACHIEVEMENT_DAY_OFFSET = 16_383;
 const MAX_DURATION_DECASECONDS = 100_000_000;
-const SIGNED_TOKEN_TRAILER_BYTES =
+const SIGNED_FINGERPRINT_TRAILER_BYTES =
+  INTEGRITY_FINGERPRINT_BYTES +
+  INTEGRITY_SIGNATURE_BYTES;
+const LEGACY_SIGNED_KEY_TRAILER_BYTES =
   INTEGRITY_COMPACT_PUBLIC_KEY_BYTES +
   INTEGRITY_SIGNATURE_BYTES;
+const MINIMUM_SHARE_PAYLOAD_BYTES = 9;
+const MINIMUM_DIRECT_HASH_TOKEN_LENGTH = Math.ceil(
+  ((MINIMUM_SHARE_PAYLOAD_BYTES +
+    SIGNED_FINGERPRINT_TRAILER_BYTES) *
+    4) /
+    3
+);
 
 // The array order is part of the canonical signed payload. Reordering an entry
 // would change the meaning of existing signed links, so this order is immutable.
@@ -493,51 +505,107 @@ export const encodeAchievementCollectionShare = async (
     payload: payloadBytes,
     purpose: "profile-share",
   });
-  const compactPublicKey = compressDevicePublicKey(
+  const fingerprint = await fingerprintPublicKeyBytes(
     identity.publicKeyBytes
   );
   const tokenBytes = new Uint8Array(
     payloadBytes.length +
-      compactPublicKey.length +
+      fingerprint.length +
       signature.length
   );
   tokenBytes.set(payloadBytes, 0);
-  tokenBytes.set(compactPublicKey, payloadBytes.length);
+  tokenBytes.set(fingerprint, payloadBytes.length);
   tokenBytes.set(
     signature,
-    payloadBytes.length + compactPublicKey.length
+    payloadBytes.length + fingerprint.length
   );
   return encodeBase64UrlBytes(tokenBytes);
+};
+
+const verifyCollectionTokenIntegrity = async (
+  bytes: Uint8Array
+): Promise<{ dataEnd: number; signerFingerprint: string }> => {
+  if (
+    bytes.length <
+    SIGNED_FINGERPRINT_TRAILER_BYTES +
+      MINIMUM_SHARE_PAYLOAD_BYTES
+  ) {
+    throw new Error("Payload ringkasan achievement terlalu pendek.");
+  }
+
+  const fingerprintDataEnd =
+    bytes.length - SIGNED_FINGERPRINT_TRAILER_BYTES;
+  const fingerprintEnd =
+    fingerprintDataEnd + INTEGRITY_FINGERPRINT_BYTES;
+  const fingerprintPayload = bytes.slice(0, fingerprintDataEnd);
+  const expectedFingerprint = bytes.slice(
+    fingerprintDataEnd,
+    fingerprintEnd
+  );
+  const fingerprintSignature = bytes.slice(fingerprintEnd);
+  try {
+    const recovered = await recoverIntegrityPublicKeyByFingerprint({
+      payload: fingerprintPayload,
+      purpose: "profile-share",
+      signature: fingerprintSignature,
+      expectedFingerprint,
+    });
+    return {
+      dataEnd: fingerprintDataEnd,
+      signerFingerprint: recovered.fingerprint,
+    };
+  } catch {
+    // Signed links created by the previous compact-key format remain valid.
+  }
+
+  if (
+    bytes.length >=
+    LEGACY_SIGNED_KEY_TRAILER_BYTES +
+      MINIMUM_SHARE_PAYLOAD_BYTES
+  ) {
+    const legacyDataEnd =
+      bytes.length - LEGACY_SIGNED_KEY_TRAILER_BYTES;
+    const publicKeyEnd =
+      legacyDataEnd + INTEGRITY_COMPACT_PUBLIC_KEY_BYTES;
+    try {
+      const payload = bytes.slice(0, legacyDataEnd);
+      const publicKeyBytes = decompressDevicePublicKey(
+        bytes.slice(legacyDataEnd, publicKeyEnd)
+      );
+      const signature = bytes.slice(publicKeyEnd);
+      const publicKey = await importDeviceVerificationKey(
+        publicKeyBytes
+      );
+      const signatureValid = await verifyIntegrityPayload({
+        publicKey,
+        payload,
+        purpose: "profile-share",
+        signature,
+      });
+      if (signatureValid) {
+        return {
+          dataEnd: legacyDataEnd,
+          signerFingerprint: await fingerprintPublicKey(
+            publicKeyBytes
+          ),
+        };
+      }
+    } catch {
+      // Invalid legacy keys and signatures use the generic error below.
+    }
+  }
+
+  throw new Error(
+    "Signature ringkasan achievement tidak valid."
+  );
 };
 
 export const decodeAchievementCollectionShare = async (
   token: string
 ): Promise<DecodedAchievementCollectionShare> => {
   const bytes = decodeCollectionToken(token);
-  if (bytes.length < SIGNED_TOKEN_TRAILER_BYTES + 9) {
-    throw new Error("Payload ringkasan achievement terlalu pendek.");
-  }
-
-  const dataEnd = bytes.length - SIGNED_TOKEN_TRAILER_BYTES;
-  const publicKeyEnd =
-    dataEnd + INTEGRITY_COMPACT_PUBLIC_KEY_BYTES;
-  const payloadBytes = bytes.slice(0, dataEnd);
-  const compactPublicKey = bytes.slice(dataEnd, publicKeyEnd);
-  const publicKeyBytes = decompressDevicePublicKey(
-    compactPublicKey
-  );
-  const signature = bytes.slice(publicKeyEnd);
-  const publicKey = await importDeviceVerificationKey(publicKeyBytes);
-  const signatureValid = await verifyIntegrityPayload({
-    publicKey,
-    payload: payloadBytes,
-    purpose: "profile-share",
-    signature,
-  });
-  if (!signatureValid) {
-    throw new Error("Signature ringkasan achievement tidak valid.");
-  }
-  const signerFingerprint = await fingerprintPublicKey(publicKeyBytes);
+  const { dataEnd, signerFingerprint } =
+    await verifyCollectionTokenIntegrity(bytes);
   const achievementMask = bytes[0];
   const unlockedAchievementIds = getAchievementIdsFromMask(achievementMask);
   if (unlockedAchievementIds.length === 0) {
@@ -593,12 +661,19 @@ export const decodeAchievementCollectionShare = async (
 export const decodeAchievementCollectionHash = async (
   hash: string
 ): Promise<DecodedAchievementCollectionShare | null> => {
-  if (!hash.startsWith(COLLECTION_SHARE_HASH_PREFIX)) {
+  const token = hash.startsWith(
+    LEGACY_COLLECTION_SHARE_HASH_PREFIX
+  )
+    ? hash.slice(LEGACY_COLLECTION_SHARE_HASH_PREFIX.length)
+    : hash.startsWith("#") &&
+        hash.length - 1 >= MINIMUM_DIRECT_HASH_TOKEN_LENGTH &&
+        /^[A-Za-z0-9_-]+$/.test(hash.slice(1))
+      ? hash.slice(1)
+      : null;
+  if (!token) {
     return null;
   }
-  return decodeAchievementCollectionShare(
-    hash.slice(COLLECTION_SHARE_HASH_PREFIX.length)
-  );
+  return decodeAchievementCollectionShare(token);
 };
 
 export const buildAchievementCollectionShareUrl = async (
@@ -608,10 +683,10 @@ export const buildAchievementCollectionShareUrl = async (
 ): Promise<string> => {
   const url = new URL(baseUrl);
   url.search = "";
-  url.hash = `p=${await encodeAchievementCollectionShare(
+  url.hash = await encodeAchievementCollectionShare(
     payload,
     providedIdentity
-  )}`;
+  );
   return url.toString();
 };
 

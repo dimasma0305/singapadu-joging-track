@@ -4,7 +4,9 @@ import {
   createEphemeralSigningIdentity,
   decompressDevicePublicKey,
   fingerprintPublicKey,
+  fingerprintPublicKeyBytes,
   importDeviceVerificationKey,
+  recoverIntegrityPublicKeyByFingerprint,
   signIntegrityPayload,
   verifyIntegrityPayload,
 } from "./integrity-utils";
@@ -92,6 +94,67 @@ describe("client-side integrity primitives", () => {
         signature,
       })
     ).toBe(false);
+  });
+
+  test("recovers the signer from a signature and its short fingerprint", async () => {
+    for (let index = 0; index < 8; index += 1) {
+      const identity = await createEphemeralSigningIdentity();
+      const payload = new TextEncoder().encode(
+        `achievement recovery ${index}`
+      );
+      const signature = await signIntegrityPayload({
+        identity,
+        payload,
+        purpose: "profile-share",
+      });
+      const expectedFingerprint =
+        await fingerprintPublicKeyBytes(identity.publicKeyBytes);
+      const recovered =
+        await recoverIntegrityPublicKeyByFingerprint({
+          payload,
+          purpose: "profile-share",
+          signature,
+          expectedFingerprint,
+        });
+
+      expect(recovered.publicKeyBytes).toEqual(
+        identity.publicKeyBytes
+      );
+      expect(recovered.fingerprint).toBe(identity.fingerprint);
+    }
+  });
+
+  test("does not recover a signer after payload or fingerprint tampering", async () => {
+    const identity = await createEphemeralSigningIdentity();
+    const payload = new TextEncoder().encode("signed profile");
+    const signature = await signIntegrityPayload({
+      identity,
+      payload,
+      purpose: "profile-share",
+    });
+    const expectedFingerprint =
+      await fingerprintPublicKeyBytes(identity.publicKeyBytes);
+    const modifiedPayload = payload.slice();
+    modifiedPayload[0] ^= 0x01;
+    const modifiedFingerprint = expectedFingerprint.slice();
+    modifiedFingerprint[0] ^= 0x01;
+
+    await expect(
+      recoverIntegrityPublicKeyByFingerprint({
+        payload: modifiedPayload,
+        purpose: "profile-share",
+        signature,
+        expectedFingerprint,
+      })
+    ).rejects.toThrow("tidak cocok");
+    await expect(
+      recoverIntegrityPublicKeyByFingerprint({
+        payload,
+        purpose: "profile-share",
+        signature,
+        expectedFingerprint: modifiedFingerprint,
+      })
+    ).rejects.toThrow("tidak cocok");
   });
 
   test("rejects malformed compressed public keys", () => {
