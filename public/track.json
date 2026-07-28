@@ -1,5 +1,37 @@
 {
   "type": "FeatureCollection",
+  "warningAreas": [
+    {
+      "id": "narrow-road-cp5-cp8",
+      "name": "CP 5–8 · Jalan Sempit",
+      "type": "warning",
+      "center": {
+        "lat": -8.5848937,
+        "lng": 115.2575094
+      },
+      "radiusMeters": 20,
+      "triggerDistanceMeters": 30,
+      "message": "Jalan sempit, awas motor.",
+      "cooldownSeconds": 300,
+      "showOnce": false,
+      "active": true
+    },
+    {
+      "id": "dog-warning-cp8-finish",
+      "name": "CP 8–Finish · Waspada Anjing",
+      "type": "warning",
+      "center": {
+        "lat": -8.5795874,
+        "lng": 115.2579657
+      },
+      "radiusMeters": 20,
+      "triggerDistanceMeters": 30,
+      "message": "Awas, ada anjing.",
+      "cooldownSeconds": 300,
+      "showOnce": false,
+      "active": true
+    }
+  ],
   "features": [
     {
       "type": "Feature",

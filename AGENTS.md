@@ -32,7 +32,7 @@ Mendeskripsikan rancangan implementasi aplikasi jogging web untuk skenario **sin
 - `app/page.tsx`
   - Orkestrasi state sesi, loading data track, geolocation lifecycle, hitung progress.
 - `app/components/TrackMap.tsx`
-  - Render peta Leaflet (client-only), rute, posisi pengguna, dan titik start/finish tanpa visual zona warning.
+  - Render peta Leaflet (client-only), rute, posisi pengguna, titik start/finish, dan orientasi heading-up tanpa visual zona warning.
 - `app/lib/track-utils.ts`
   - Helper geospasial (`haversine`, jarak kumulatif, durasi/pacing, resolve distance).
 - `public/track.json`
@@ -56,7 +56,7 @@ Mendeskripsikan rancangan implementasi aplikasi jogging web untuk skenario **sin
   - Panel kontrol sebagai “bottom sheet” menutup sebagian bawah.
   - Elemen overlay ringkas dan tidak menutupi area peta kritis.
 - Kontrol penting tetap besar dan satu-tangan:
-  - Start/stop, recenter, fokus route, follow toggle.
+  - Start/stop, recenter, fokus route, follow toggle, dan heading-up/utara-di-atas.
 - Prioritas visual:
   - Progress, jarak tempuh, pace, ETA tetap terlihat cepat.
   - Warning muncul sebagai toast yang tidak menghalangi gesture peta.
@@ -70,6 +70,9 @@ Mendeskripsikan rancangan implementasi aplikasi jogging web untuk skenario **sin
   - Jika track tidak ada, fallback ke `main`.
 - F02 Peta navigasi
   - Tampilkan `Polyline` rute, marker start/finish, dan posisi user real-time.
+  - Saat sesi dimulai, aktifkan heading-up agar arah lintasan berikutnya berada di atas layar.
+  - Prioritaskan heading GPS saat bergerak, lalu bearing pergerakan dan arah waypoint berikutnya sebagai fallback.
+  - Sediakan tombol kompas untuk beralih kembali ke orientasi utara-di-atas.
 - F03 Tracking sesi
   - Update berdasarkan geolocation.
   - Hitung progress berdasarkan closet index + cumulative distance.
@@ -81,6 +84,8 @@ Mendeskripsikan rancangan implementasi aplikasi jogging web untuk skenario **sin
   - Trigger saat posisi masuk radius sesuai `triggerDistanceMeters`.
   - Cegah spam dengan `cooldownSeconds` dan `showOnce`.
   - Area tidak digambar sebagai zona di peta; event ditampilkan sebagai toast dan, jika diizinkan, notifikasi sistem.
+  - Mendekati CP5 memicu peringatan “Jalan sempit, awas motor” untuk ruas CP5–CP8.
+  - Mendekati CP8 memicu peringatan “Awas, ada anjing” untuk ruas CP8 menuju finish.
 - F06 Sesi lokal
   - Simpan histori sesi dan event warning ke localStorage.
 - F07 Checkpoint & Street View
@@ -90,12 +95,14 @@ Mendeskripsikan rancangan implementasi aplikasi jogging web untuk skenario **sin
 ## Kebutuhan Teknik
 - Seluruh komponen Leaflet dijalankan client-side:
   - `dynamic(() => import("./components/TrackMap"), { ssr: false })`.
+- Rotasi peta menggunakan `leaflet-rotate` yang dimuat client-side.
 - Import `leaflet/dist/leaflet.css`.
 - Tile map untuk produk awal: OpenStreetMap/CARTO (sesuai legal usage).
 
 ## Acceptance Criteria
 - Aplikasi terbuka dari QR di smartphone dalam waktu singkat.
 - Peta tampil penuh layar.
+- Arah awal lintasan selatan tampil menuju atas layar setelah sesi dimulai.
 - Posisi pengguna muncul dan diperbarui saat sesi berjalan.
 - Progress, jarak tempuh, dan pace tidak freeze.
 - Notifikasi warning muncul dalam <1s dari update lokasi dan tidak spam.

@@ -1,10 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Circle, MapContainer, Marker, Polyline, Popup, TileLayer, Tooltip, useMap } from "react-leaflet";
 import L from "leaflet";
 import type { SessionSample, Track } from "../lib/types";
-import { createGoogleStreetViewUrl, haversineMeters } from "../lib/track-utils";
+import {
+  createGoogleStreetViewUrl,
+  haversineMeters,
+  normalizeBearingDegrees,
+  shortestBearingDeltaDegrees,
+} from "../lib/track-utils";
 
 function createBadgeIcon(label: string, color: string, pulse: boolean = false) {
   const pulseHtml = pulse 
@@ -47,6 +52,8 @@ type TrackMapProps = {
   closestIndex: number;
   progressPercent: number;
   followUser: boolean;
+  navigationActive: boolean;
+  navigationBearingDegrees: number;
   sessionFinishPosition?: SessionSample | null;
   mapTheme?: "dark" | "light";
   isSheetCollapsed?: boolean;
@@ -58,6 +65,8 @@ type MapRuntimeProps = {
   userPosition: SessionSample | null;
   currentTrackCenter: [number, number];
   followUser: boolean;
+  navigationActive: boolean;
+  navigationBearingDegrees: number;
   isSheetCollapsed: boolean;
   onMapReady?: (map: L.Map) => void;
   onFollowChange?: (follow: boolean) => void;
@@ -79,11 +88,14 @@ function MapRuntime({
   userPosition,
   currentTrackCenter,
   followUser,
+  navigationActive,
+  navigationBearingDegrees,
   isSheetCollapsed,
   onMapReady,
   onFollowChange,
 }: MapRuntimeProps) {
   const map = useMap();
+  const bearingAnimationFrameRef = useRef<number | null>(null);
   const latestTargetRef = useRef<[number, number]>(currentTrackCenter);
   latestTargetRef.current = userPosition
     ? [userPosition.lat, userPosition.lng]
@@ -92,6 +104,73 @@ function MapRuntime({
   useEffect(() => {
     onMapReady?.(map);
   }, [map, onMapReady]);
+
+  useEffect(() => {
+    const rotatableMap = map as L.Map & {
+      getBearing?: () => number;
+      setBearing?: (bearing: number) => void;
+    };
+    if (
+      typeof rotatableMap.getBearing !== "function" ||
+      typeof rotatableMap.setBearing !== "function"
+    ) {
+      return;
+    }
+
+    if (bearingAnimationFrameRef.current !== null) {
+      window.cancelAnimationFrame(bearingAnimationFrameRef.current);
+      bearingAnimationFrameRef.current = null;
+    }
+
+    const targetBearing = navigationActive
+      ? normalizeBearingDegrees(navigationBearingDegrees)
+      : 0;
+    const startBearing = normalizeBearingDegrees(rotatableMap.getBearing());
+    const bearingDelta = shortestBearingDeltaDegrees(
+      startBearing,
+      targetBearing
+    );
+    const reduceMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)"
+    ).matches;
+
+    if (reduceMotion || Math.abs(bearingDelta) < 0.5) {
+      rotatableMap.setBearing(targetBearing);
+      return;
+    }
+
+    const startedAt = window.performance.now();
+    const durationMilliseconds = 500;
+    const animateBearing = (timestamp: number) => {
+      const progress = Math.min(
+        1,
+        (timestamp - startedAt) / durationMilliseconds
+      );
+      const easedProgress = 1 - Math.pow(1 - progress, 3);
+      rotatableMap.setBearing(
+        normalizeBearingDegrees(
+          startBearing + bearingDelta * easedProgress
+        )
+      );
+
+      if (progress < 1) {
+        bearingAnimationFrameRef.current =
+          window.requestAnimationFrame(animateBearing);
+      } else {
+        bearingAnimationFrameRef.current = null;
+      }
+    };
+
+    bearingAnimationFrameRef.current =
+      window.requestAnimationFrame(animateBearing);
+
+    return () => {
+      if (bearingAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(bearingAnimationFrameRef.current);
+        bearingAnimationFrameRef.current = null;
+      }
+    };
+  }, [map, navigationActive, navigationBearingDegrees]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia("(max-width: 900px)").matches) {
@@ -164,12 +243,42 @@ export default function TrackMap({
   closestIndex,
   progressPercent,
   followUser,
+  navigationActive,
+  navigationBearingDegrees,
   sessionFinishPosition = null,
   mapTheme = "dark",
   isSheetCollapsed = false,
   onMapReady,
   onFollowChange,
 }: TrackMapProps) {
+  const [rotationRuntimeStatus, setRotationRuntimeStatus] = useState<
+    "loading" | "ready" | "unavailable"
+  >("loading");
+
+  useEffect(() => {
+    let cancelled = false;
+    const leafletGlobal = globalThis as typeof globalThis & {
+      L?: typeof L;
+    };
+    leafletGlobal.L = L;
+
+    void import("leaflet-rotate")
+      .then(() => {
+        if (!cancelled) {
+          setRotationRuntimeStatus("ready");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRotationRuntimeStatus("unavailable");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const routePositions = useMemo(
     () => track.waypoints.map((point) => [point.lat, point.lng] as [number, number]),
     [track.waypoints]
@@ -209,18 +318,38 @@ export default function TrackMap({
     ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
     : "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
 
+  if (rotationRuntimeStatus === "loading") {
+    return (
+      <div
+        className="track-map map-placeholder"
+        role="status"
+        aria-live="polite"
+      >
+        <span className="spinner" aria-hidden="true" />
+        <span>Menyiapkan orientasi peta...</span>
+      </div>
+    );
+  }
+
   return (
     <MapContainer
       center={currentTrackCenter}
       zoom={16}
       scrollWheelZoom
       zoomControl={false}
+      rotate={rotationRuntimeStatus === "ready"}
+      bearing={0}
+      touchRotate={false}
+      shiftKeyRotate={false}
+      rotateControl={false}
       className="track-map"
     >
       <MapRuntime
         userPosition={userPosition}
         currentTrackCenter={currentTrackCenter}
         followUser={followUser}
+        navigationActive={navigationActive}
+        navigationBearingDegrees={navigationBearingDegrees}
         isSheetCollapsed={isSheetCollapsed}
         onMapReady={onMapReady}
         onFollowChange={onFollowChange}

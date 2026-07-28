@@ -54,6 +54,13 @@ const validateSample = (
     (value.accuracy !== undefined &&
       value.accuracy !== null &&
       !isBoundedNumber(value.accuracy, 0, 100_000)) ||
+    (value.headingDegrees !== undefined &&
+      value.headingDegrees !== null &&
+      (!isBoundedNumber(value.headingDegrees, 0, 360) ||
+        value.headingDegrees >= 360)) ||
+    (value.speedMetersPerSecond !== undefined &&
+      value.speedMetersPerSecond !== null &&
+      !isBoundedNumber(value.speedMetersPerSecond, 0, 1_000)) ||
     (value.routeProgressMeters !== undefined &&
       !isBoundedNumber(
         value.routeProgressMeters,
@@ -293,6 +300,12 @@ const freezeSample = (sample: SessionSample): SessionSample =>
     lng: sample.lng,
     ...(sample.accuracy !== undefined
       ? { accuracy: sample.accuracy }
+      : {}),
+    ...(sample.headingDegrees !== undefined
+      ? { headingDegrees: sample.headingDegrees }
+      : {}),
+    ...(sample.speedMetersPerSecond !== undefined
+      ? { speedMetersPerSecond: sample.speedMetersPerSecond }
       : {}),
     ...(sample.routeProgressMeters !== undefined
       ? { routeProgressMeters: sample.routeProgressMeters }

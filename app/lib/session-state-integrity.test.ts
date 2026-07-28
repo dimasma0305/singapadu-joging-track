@@ -42,6 +42,8 @@ const createRunningSession = (
       lat: -8.58,
       lng: 115.26,
       accuracy: 8,
+      headingDegrees: 179,
+      speedMetersPerSecond: 2.2,
       routeProgressMeters: 100,
       timestamp: 61_000,
     },
@@ -62,6 +64,10 @@ describe("runtime session-state integrity", () => {
     expect(Object.isFrozen(result.session)).toBe(true);
     expect(Object.isFrozen(result.session.samples)).toBe(true);
     expect(Object.isFrozen(result.session.samples[0])).toBe(true);
+    expect(result.session.samples[0]).toMatchObject({
+      headingDegrees: 179,
+      speedMetersPerSecond: 2.2,
+    });
     expect(result.session).not.toBe(candidate);
   });
 
@@ -74,6 +80,16 @@ describe("runtime session-state integrity", () => {
     const invalidGps = createRunningSession({
       samples: [{ lat: 120, lng: 115.26, timestamp: 62_000 }],
     });
+    const invalidHeading = createRunningSession({
+      samples: [
+        {
+          lat: -8.58,
+          lng: 115.26,
+          headingDegrees: 360,
+          timestamp: 62_000,
+        },
+      ],
+    });
 
     expect(hardenSessionTransition(previous, rollback)).toEqual({
       valid: false,
@@ -84,6 +100,7 @@ describe("runtime session-state integrity", () => {
     if (!gpsResult.valid) {
       expect(gpsResult.reason).toContain("koordinat");
     }
+    expect(hardenSessionTransition(previous, invalidHeading).valid).toBe(false);
   });
 
   test("rejects status jumps and unauthorized session replacement", () => {

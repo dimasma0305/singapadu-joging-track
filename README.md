@@ -3,6 +3,7 @@
 Aplikasi web untuk single-QR jogging track:
 - scan QR -> buka route yang sama
 - map visual dengan Leaflet
+- orientasi heading-up otomatis saat sesi dimulai, dengan fallback arah rute
 - tracking real-time posisi
 - progress & pace
 - area warning berbasis jarak (info/warning/critical)
@@ -34,7 +35,7 @@ Buka: `http://localhost:3000/?track=main`
 
 - `public/track.json` → konfigurasi rute dan area warning (saat ini mendukung format JSON lintas-lintas, termasuk GeoJSON `FeatureCollection` LineString)
 - `app/page.tsx` → halaman utama + engine tracking
-- `app/components/TrackMap.tsx` → visualisasi Leaflet
+- `app/components/TrackMap.tsx` → visualisasi Leaflet + rotasi heading-up
 - `app/lib/track-utils.ts` → kalkulasi geospasial dasar
 - `app/lib/achievement-utils.ts` → milestone achievement dan protokol URL share
 - `app/lib/runner-profile-image.ts` → generator dan share PNG profil

@@ -52,6 +52,7 @@ import {
   ImageDown,
   Bell,
   BellOff,
+  Compass,
 } from "lucide-react";
 import type {
   RunSession,
@@ -72,6 +73,8 @@ import {
   formatDuration,
   formatPace,
   haversineMeters,
+  normalizeBearingDegrees,
+  resolveNavigationBearingDegrees,
   resolveTrackDistance,
   resolveConfirmedOffRouteDistanceMeters,
   resolveProgressSampleJumpLimitMeters,
@@ -693,6 +696,7 @@ export default function HomePage() {
   const [locationError, setLocationError] = useState<string | null>(null);
   const [toastQueue, setToastQueue] = useState<ToastMessage[]>([]);
   const [followUser, setFollowUser] = useState(true);
+  const [headingUpEnabled, setHeadingUpEnabled] = useState(false);
   const [permissionStatus, setPermissionStatus] = useState<GeolocationPermissionState>("unknown");
   const [isRequestingPermission, setIsRequestingPermission] = useState(false);
   const [showPermissionSheet, setShowPermissionSheet] = useState(false);
@@ -840,6 +844,37 @@ export default function HomePage() {
     }
     return Math.min(session.closestIndex, track.waypoints.length - 1);
   }, [track, session.closestIndex, session.status]);
+
+  const navigationBearingDegrees = useMemo(() => {
+    if (!track || track.waypoints.length < 2) {
+      return 0;
+    }
+
+    const currentPosition =
+      lastPosition ?? session.samples[session.samples.length - 1] ?? null;
+    const latestRecordedPosition =
+      session.samples[session.samples.length - 1] ?? null;
+    const previousPosition =
+      currentPosition &&
+      latestRecordedPosition &&
+      latestRecordedPosition.timestamp < currentPosition.timestamp
+        ? latestRecordedPosition
+        : session.samples[session.samples.length - 2] ?? null;
+
+    return resolveNavigationBearingDegrees({
+      gpsHeadingDegrees: currentPosition?.headingDegrees,
+      speedMetersPerSecond: currentPosition?.speedMetersPerSecond,
+      previousPosition,
+      currentPosition,
+      waypoints: track.waypoints,
+      closestIndex: displayClosestIndex,
+    });
+  }, [displayClosestIndex, lastPosition, session.samples, track]);
+
+  const navigationSessionActive =
+    session.status === "running" || session.status === "paused";
+  const headingUpActive =
+    navigationSessionActive && followUser && headingUpEnabled;
 
   const displayedDistance = useMemo(() => {
     if (session.status === "idle") {
@@ -1674,6 +1709,7 @@ export default function HomePage() {
     setWarningPopup(null);
     setLastPosition(null);
     lastPositionRef.current = null;
+    setHeadingUpEnabled(false);
     warningStateRef.current = {};
     offRouteStateRef.current = { outside: false, lastShown: 0 };
     lastLiveNotificationKeyRef.current = null;
@@ -1714,12 +1750,27 @@ export default function HomePage() {
       );
     });
 
-  const createSessionSample = (position: GeolocationPosition): SessionSample => ({
-    lat: position.coords.latitude,
-    lng: position.coords.longitude,
-    accuracy: position.coords.accuracy ?? null,
-    timestamp: position.timestamp || Date.now(),
-  });
+  const createSessionSample = (position: GeolocationPosition): SessionSample => {
+    const rawHeading = position.coords.heading;
+    const rawSpeed = position.coords.speed;
+
+    return {
+      lat: position.coords.latitude,
+      lng: position.coords.longitude,
+      accuracy: position.coords.accuracy ?? null,
+      headingDegrees:
+        typeof rawHeading === "number" && Number.isFinite(rawHeading)
+          ? normalizeBearingDegrees(rawHeading)
+          : null,
+      speedMetersPerSecond:
+        typeof rawSpeed === "number" &&
+        Number.isFinite(rawSpeed) &&
+        rawSpeed >= 0
+          ? rawSpeed
+          : null,
+      timestamp: position.timestamp || Date.now(),
+    };
+  };
 
   const applyLocationPosition = (sample: SessionSample, shouldCenter = true) => {
     setLastPosition(sample);
@@ -2233,6 +2284,7 @@ export default function HomePage() {
     setLocationError(null);
     offRouteStateRef.current = { outside: false, lastShown: 0 };
     setFollowUser(false);
+    setHeadingUpEnabled(false);
 
     if (useSoundAndHapticRef.current) {
       triggerVibrate("success");
@@ -2319,6 +2371,7 @@ export default function HomePage() {
     };
     applySession(resumedSession);
     setFollowUser(true);
+    setHeadingUpEnabled(true);
     if (!functionalTestActiveRef.current) {
       enqueueToast({
         title: "Sesi Dilanjutkan",
@@ -2444,6 +2497,7 @@ export default function HomePage() {
       offRouteStateRef.current = { outside: false, lastShown: 0 };
       resetProgressTracking();
       setFollowUser(true);
+      setHeadingUpEnabled(true);
 
       const initialSamples: SessionSample[] = [
         { ...currentPosition, routeProgressMeters: 0 },
@@ -2732,6 +2786,7 @@ export default function HomePage() {
     setIsSimulating(true);
     isSimulatingRef.current = true;
     setFollowUser(true);
+    setHeadingUpEnabled(true);
     setLocationError(null);
     setStartBlockInfo(null);
     setWarningPopup(null);
@@ -3571,6 +3626,9 @@ export default function HomePage() {
 
   const onRecenter = () => {
     setFollowUser(true);
+    if (navigationSessionActive) {
+      setHeadingUpEnabled(true);
+    }
     const target = lastPosition || session.samples[session.samples.length - 1] || null;
 
     if (target) {
@@ -3617,10 +3675,38 @@ export default function HomePage() {
     }
   };
 
+  const resetMapBearing = () => {
+    const rotatableMap = mapRef.current as
+      | (L.Map & { setBearing?: (bearing: number) => void })
+      | null;
+    if (rotatableMap && typeof rotatableMap.setBearing === "function") {
+      rotatableMap.setBearing(0);
+    }
+  };
+
+  const onToggleMapOrientation = () => {
+    if (!navigationSessionActive) {
+      return;
+    }
+
+    if (!headingUpActive) {
+      setHeadingUpEnabled(true);
+      onRecenter();
+      return;
+    }
+
+    setHeadingUpEnabled(false);
+    resetMapBearing();
+  };
+
   const onFitRoute = () => {
     if (!mapRef.current || !track) {
       return;
     }
+
+    setFollowUser(false);
+    setHeadingUpEnabled(false);
+    resetMapBearing();
 
     if (!track.waypoints || track.waypoints.length === 0) {
       return;
@@ -3739,6 +3825,9 @@ export default function HomePage() {
             ? `${formatDistance(nextWaypointDistance)} ke CP`
             : `${formatDistance(trackDistance)} total`;
   const compactPace = formatPace(session.averagePacePerKm).replace(" /km", "");
+  const mapOrientationLabel = headingUpActive
+    ? "Peta mengikuti arah lari"
+    : "Utara berada di atas";
 
   return (
     <main className={`track-shell ${isSheetCollapsed ? "sheet-collapsed" : ""}`}>
@@ -3824,6 +3913,8 @@ export default function HomePage() {
                   closestIndex={displayClosestIndex}
                   progressPercent={progress}
                   followUser={followUser}
+                  navigationActive={headingUpActive}
+                  navigationBearingDegrees={navigationBearingDegrees}
                   sessionFinishPosition={
                     session.status === "finished"
                       ? session.finishPosition
@@ -3841,7 +3932,7 @@ export default function HomePage() {
 
                 <div
                   className="map-status-card"
-                  aria-label={`${mapStatusLabel}. ${routeCycle.completedLaps} lap selesai. Saat ini lap ${routeCycle.currentLapNumber}. Jarak total ${formatDistance(displayedDistance)}. Pace ${compactPace}. ${mapStatusHint}.`}
+                  aria-label={`${mapStatusLabel}. ${mapOrientationLabel}. ${routeCycle.completedLaps} lap selesai. Saat ini lap ${routeCycle.currentLapNumber}. Jarak total ${formatDistance(displayedDistance)}. Pace ${compactPace}. ${mapStatusHint}.`}
                 >
                   <div className="map-status-heading">
                     <span>
@@ -3881,6 +3972,37 @@ export default function HomePage() {
                   >
                     <Locate size={20} aria-hidden="true" />
                   </button>
+                  {navigationSessionActive ? (
+                    <button
+                      type="button"
+                      className={`overlay-fab orientation-toggle ${
+                        headingUpActive ? "active" : ""
+                      }`}
+                      onClick={onToggleMapOrientation}
+                      title={
+                        headingUpActive
+                          ? "Gunakan Utara di Atas"
+                          : "Ikuti Arah Lari"
+                      }
+                      aria-label={
+                        headingUpActive
+                          ? "Ubah orientasi peta menjadi utara di atas"
+                          : "Putar peta mengikuti arah lari"
+                      }
+                      aria-pressed={headingUpActive}
+                    >
+                      <Compass
+                        size={20}
+                        className="orientation-compass"
+                        style={{
+                          transform: headingUpActive
+                            ? `rotate(${-navigationBearingDegrees}deg)`
+                            : "rotate(0deg)",
+                        }}
+                        aria-hidden="true"
+                      />
+                    </button>
+                  ) : null}
                   <button 
                     type="button" 
                     className="overlay-fab" 

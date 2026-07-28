@@ -45,6 +45,8 @@ export type Track = {
 
 export type SessionSample = GeoPoint & {
   accuracy?: number | null;
+  headingDegrees?: number | null;
+  speedMetersPerSecond?: number | null;
   routeProgressMeters?: number;
   timestamp: number;
 };

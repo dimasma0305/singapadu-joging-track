@@ -3,6 +3,114 @@ import type { GeoPoint, TrackWaypoint, Track, WarningAreaType } from "./types";
 const EARTH_RADIUS_METERS = 6_371_000;
 
 const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
+const toDegrees = (radians: number) => (radians * 180) / Math.PI;
+
+export const normalizeBearingDegrees = (degrees: number): number =>
+  ((degrees % 360) + 360) % 360;
+
+export const shortestBearingDeltaDegrees = (
+  fromDegrees: number,
+  toDegreesValue: number
+): number =>
+  ((normalizeBearingDegrees(toDegreesValue) -
+    normalizeBearingDegrees(fromDegrees) +
+    540) %
+    360) -
+  180;
+
+export const calculateBearingDegrees = (
+  from: GeoPoint,
+  to: GeoPoint
+): number | null => {
+  if (haversineMeters(from, to) < 0.5) {
+    return null;
+  }
+
+  const fromLatitude = toRadians(from.lat);
+  const toLatitude = toRadians(to.lat);
+  const longitudeDelta = toRadians(to.lng - from.lng);
+  const y = Math.sin(longitudeDelta) * Math.cos(toLatitude);
+  const x =
+    Math.cos(fromLatitude) * Math.sin(toLatitude) -
+    Math.sin(fromLatitude) *
+      Math.cos(toLatitude) *
+      Math.cos(longitudeDelta);
+
+  return normalizeBearingDegrees(toDegrees(Math.atan2(y, x)));
+};
+
+type NavigationBearingOptions = {
+  gpsHeadingDegrees?: number | null;
+  speedMetersPerSecond?: number | null;
+  previousPosition?: GeoPoint | null;
+  currentPosition?: GeoPoint | null;
+  waypoints: TrackWaypoint[];
+  closestIndex: number;
+  minimumMovementMeters?: number;
+};
+
+export const resolveNavigationBearingDegrees = ({
+  gpsHeadingDegrees,
+  speedMetersPerSecond,
+  previousPosition = null,
+  currentPosition = null,
+  waypoints,
+  closestIndex,
+  minimumMovementMeters = 5,
+}: NavigationBearingOptions): number => {
+  const hasUsableGpsHeading =
+    typeof gpsHeadingDegrees === "number" &&
+    Number.isFinite(gpsHeadingDegrees) &&
+    gpsHeadingDegrees >= 0 &&
+    gpsHeadingDegrees < 360 &&
+    (typeof speedMetersPerSecond !== "number" ||
+      !Number.isFinite(speedMetersPerSecond) ||
+      speedMetersPerSecond >= 0.5);
+
+  if (hasUsableGpsHeading) {
+    return normalizeBearingDegrees(gpsHeadingDegrees);
+  }
+
+  if (
+    previousPosition &&
+    currentPosition &&
+    haversineMeters(previousPosition, currentPosition) >=
+      Math.max(1, minimumMovementMeters)
+  ) {
+    const movementBearing = calculateBearingDegrees(
+      previousPosition,
+      currentPosition
+    );
+    if (movementBearing !== null) {
+      return movementBearing;
+    }
+  }
+
+  if (waypoints.length < 2) {
+    return 0;
+  }
+
+  const lastIndex = waypoints.length - 1;
+  const startIndex = Math.min(Math.max(0, closestIndex), lastIndex);
+  const routeStart = waypoints[startIndex];
+  const isLoop = haversineMeters(waypoints[0], waypoints[lastIndex]) < 35;
+
+  for (let offset = 1; offset < waypoints.length; offset += 1) {
+    const rawIndex = startIndex + offset;
+    if (rawIndex > lastIndex && !isLoop) {
+      break;
+    }
+    const candidateIndex =
+      rawIndex <= lastIndex ? rawIndex : rawIndex - lastIndex;
+    const candidate = waypoints[candidateIndex];
+    const routeBearing = calculateBearingDegrees(routeStart, candidate);
+    if (routeBearing !== null) {
+      return routeBearing;
+    }
+  }
+
+  return 0;
+};
 
 export const haversineMeters = (a: GeoPoint, b: GeoPoint): number => {
   const dLat = toRadians(b.lat - a.lat);

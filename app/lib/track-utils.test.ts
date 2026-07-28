@@ -3,15 +3,34 @@ import {
   advanceContinuousRouteProgress,
   advanceSequentialRouteProgress,
   calculateActiveDurationSeconds,
+  calculateBearingDegrees,
   calculateRollingPacePerKm,
   createGoogleStreetViewUrl,
   cumulativeDistanceFromWaypoints,
+  normalizeBearingDegrees,
   resolveConfirmedOffRouteDistanceMeters,
+  resolveNavigationBearingDegrees,
   resolveProgressSampleJumpLimitMeters,
+  shortestBearingDeltaDegrees,
 } from "./track-utils";
 import type { TrackWaypoint } from "./types";
 
 type TrackGeoJson = {
+  warningAreas: Array<{
+    id: string;
+    name: string;
+    type: "info" | "warning" | "critical";
+    center: {
+      lat: number;
+      lng: number;
+    };
+    radiusMeters: number;
+    triggerDistanceMeters: number;
+    message: string;
+    cooldownSeconds: number;
+    showOnce: boolean;
+    active: boolean;
+  }>;
   features: Array<{
     properties: {
       startRadiusMeters: number;
@@ -54,6 +73,50 @@ const progressOptions = {
   reachRadiusMeters: 20,
   routeCorridorMeters: 20,
 };
+
+describe("heading-up navigation", () => {
+  test("normalizes bearings and chooses the shortest rotation", () => {
+    expect(normalizeBearingDegrees(-10)).toBe(350);
+    expect(normalizeBearingDegrees(370)).toBe(10);
+    expect(shortestBearingDeltaDegrees(350, 10)).toBe(20);
+    expect(shortestBearingDeltaDegrees(10, 350)).toBe(-20);
+  });
+
+  test("orients the southbound start segment toward the top of the map", () => {
+    const startBearing = calculateBearingDegrees(waypoints[0], waypoints[1]);
+    expect(startBearing).not.toBeNull();
+    expect(startBearing as number).toBeGreaterThan(175);
+    expect(startBearing as number).toBeLessThan(185);
+
+    expect(
+      resolveNavigationBearingDegrees({
+        waypoints,
+        closestIndex: 0,
+        currentPosition: waypoints[0],
+      })
+    ).toBeCloseTo(startBearing as number, 5);
+  });
+
+  test("prefers a moving GPS heading and rejects a stationary heading", () => {
+    expect(
+      resolveNavigationBearingDegrees({
+        gpsHeadingDegrees: 92,
+        speedMetersPerSecond: 2.4,
+        waypoints,
+        closestIndex: 0,
+      })
+    ).toBe(92);
+
+    const routeBearing = resolveNavigationBearingDegrees({
+      gpsHeadingDegrees: 0,
+      speedMetersPerSecond: 0,
+      waypoints,
+      closestIndex: 0,
+    });
+    expect(routeBearing).toBeGreaterThan(175);
+    expect(routeBearing).toBeLessThan(185);
+  });
+});
 
 describe("sequential route progress", () => {
   test("does not add meters when moving backward or outside the route corridor", () => {
@@ -280,6 +343,29 @@ describe("pause and checkpoint integrations", () => {
     expect(
       checkpoints.filter((checkpoint) => checkpoint.streetView).map((checkpoint) => checkpoint.name)
     ).toEqual(["CP 3", "CP 5", "CP 8"]);
+  });
+
+  test("configures safety notifications at CP5 and CP8 without map zones", () => {
+    const checkpoints = trackPayload.features[0].properties.checkpoints;
+    const cp5 = checkpoints.find((checkpoint) => checkpoint.id === "cp-5");
+    const cp8 = checkpoints.find((checkpoint) => checkpoint.id === "cp-8");
+    const [narrowRoad, dogWarning] = trackPayload.warningAreas;
+
+    expect(trackPayload.warningAreas).toHaveLength(2);
+    expect(narrowRoad).toMatchObject({
+      id: "narrow-road-cp5-cp8",
+      center: { lat: cp5?.lat, lng: cp5?.lng },
+      message: "Jalan sempit, awas motor.",
+      showOnce: false,
+      active: true,
+    });
+    expect(dogWarning).toMatchObject({
+      id: "dog-warning-cp8-finish",
+      center: { lat: cp8?.lat, lng: cp8?.lng },
+      message: "Awas, ada anjing.",
+      showOnce: false,
+      active: true,
+    });
   });
 
   test("creates an official Google Maps Street View URL", () => {

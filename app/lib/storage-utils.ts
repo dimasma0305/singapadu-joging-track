@@ -84,6 +84,22 @@ const normalizeStoredFinishPosition = (
     return null;
   }
 
+  const normalizedHeadingDegrees =
+    position.headingDegrees === null
+      ? null
+      : isFiniteNumber(position.headingDegrees) &&
+          position.headingDegrees >= 0 &&
+          position.headingDegrees < 360
+        ? position.headingDegrees
+        : undefined;
+  const normalizedSpeedMetersPerSecond =
+    position.speedMetersPerSecond === null
+      ? null
+      : isFiniteNumber(position.speedMetersPerSecond) &&
+          position.speedMetersPerSecond >= 0
+        ? position.speedMetersPerSecond
+        : undefined;
+
   return {
     lat: position.lat,
     lng: position.lng,
@@ -91,6 +107,12 @@ const normalizeStoredFinishPosition = (
       position.accuracy === null || isFiniteNumber(position.accuracy)
         ? position.accuracy
         : null,
+    ...(normalizedHeadingDegrees !== undefined
+      ? { headingDegrees: normalizedHeadingDegrees }
+      : {}),
+    ...(normalizedSpeedMetersPerSecond !== undefined
+      ? { speedMetersPerSecond: normalizedSpeedMetersPerSecond }
+      : {}),
     routeProgressMeters: isNonNegativeNumber(position.routeProgressMeters)
       ? position.routeProgressMeters
       : undefined,
