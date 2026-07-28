@@ -19,7 +19,7 @@ const nextConfig = {
       }
     : {}),
   ...(isGitHubPages ? { basePath } : {}),
-  ...(usesDistExport ? { distDir: "dist" } : {}),
+  ...(usesDistExport ? { distDir: "dist/client" } : {}),
   env: {
     NEXT_PUBLIC_BASE_PATH: basePath,
   },
