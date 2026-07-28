@@ -477,29 +477,6 @@ main.track-shell {
   }
 }
 
-/* Geofence styling animations */
-.active-geofence {
-  stroke-width: 5;
-  animation: dash-geofence 30s infinite linear, glow-geofence 2s infinite alternate ease-in-out;
-}
-
-@keyframes dash-geofence {
-  to {
-    stroke-dashoffset: -500;
-  }
-}
-
-@keyframes glow-geofence {
-  0% {
-    fill-opacity: 0.22;
-    stroke-opacity: 0.85;
-  }
-  100% {
-    fill-opacity: 0.35;
-    stroke-opacity: 1;
-  }
-}
-
 /* Visible start/finish activation radius */
 .area-effect-circle {
   animation: area-effect-pulse 2s ease-in-out infinite;

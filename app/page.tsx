@@ -182,7 +182,7 @@ const FUNCTIONAL_TEST_CASES: ReadonlyArray<Pick<FunctionalTestResult, "id" | "la
   { id: "session-start", label: "Mulai sesi simulasi" },
   { id: "progress-metrics", label: "Progress, jarak & pace" },
   { id: "pause-resume", label: "Pause & resume" },
-  { id: "warning-engine", label: "Geofence & warning toast" },
+  { id: "warning-engine", label: "Notifikasi peringatan" },
   { id: "multi-lap-loop", label: "Loop lebih dari satu lap" },
   { id: "finish-flow", label: "Selesai di posisi saat ini" },
   { id: "achievement-engine", label: "Achievement & statistik" },
@@ -693,7 +693,6 @@ export default function HomePage() {
   const [locationError, setLocationError] = useState<string | null>(null);
   const [toastQueue, setToastQueue] = useState<ToastMessage[]>([]);
   const [followUser, setFollowUser] = useState(true);
-  const [activeWarningId, setActiveWarningId] = useState<string | null>(null);
   const [permissionStatus, setPermissionStatus] = useState<GeolocationPermissionState>("unknown");
   const [isRequestingPermission, setIsRequestingPermission] = useState(false);
   const [showPermissionSheet, setShowPermissionSheet] = useState(false);
@@ -1673,7 +1672,6 @@ export default function HomePage() {
       return;
     }
     setWarningPopup(null);
-    setActiveWarningId(null);
     setLastPosition(null);
     lastPositionRef.current = null;
     warningStateRef.current = {};
@@ -2049,7 +2047,6 @@ export default function HomePage() {
       }
       const current = prev[0];
       if (current.warningAreaId) {
-        setActiveWarningId((prevId) => (prevId === current.warningAreaId ? null : prevId));
         setWarningPopup((currentPopup) => {
           if (!currentPopup || currentPopup.areaId !== current.warningAreaId) {
             return currentPopup;
@@ -2234,7 +2231,6 @@ export default function HomePage() {
     resetProgressTracking();
 
     setLocationError(null);
-    setActiveWarningId(null);
     offRouteStateRef.current = { outside: false, lastShown: 0 };
     setFollowUser(false);
 
@@ -2444,7 +2440,6 @@ export default function HomePage() {
       lastPositionRef.current = currentPosition;
       setLocationError(null);
       setWarningPopup(null);
-      setActiveWarningId(null);
       warningStateRef.current = {};
       offRouteStateRef.current = { outside: false, lastShown: 0 };
       resetProgressTracking();
@@ -2591,7 +2586,7 @@ export default function HomePage() {
       updateFunctionalTestResult(
         "warning-engine",
         "failed",
-        "Engine warning tidak menghasilkan event."
+        "Engine notifikasi tidak menghasilkan event."
       );
     }
 
@@ -2740,7 +2735,6 @@ export default function HomePage() {
     setLocationError(null);
     setStartBlockInfo(null);
     setWarningPopup(null);
-    setActiveWarningId(null);
     setToastQueue([]);
 
     const validTrack =
@@ -2867,7 +2861,7 @@ export default function HomePage() {
     }
     updateFunctionalTestResult("progress-metrics", "running", "Menunggu pergerakan rute.");
     updateFunctionalTestResult("pause-resume", "running", "Dijadwalkan pada sepertiga rute.");
-    updateFunctionalTestResult("warning-engine", "running", "Menunggu zona uji.");
+    updateFunctionalTestResult("warning-engine", "running", "Menunggu pemicu notifikasi.");
     updateFunctionalTestResult(
       "multi-lap-loop",
       "running",
@@ -2979,12 +2973,12 @@ export default function HomePage() {
 
       const syntheticWarning: WarningArea = {
         id: "functional-test-zone",
-        name: "Zona Uji Otomatis",
+        name: "Notifikasi Uji Otomatis",
         type: "info",
         center: { lat: point.lat, lng: point.lng },
         radiusMeters: 10,
         triggerDistanceMeters: 5,
-        message: "Engine geofence berhasil mendeteksi posisi simulasi.",
+        message: "Engine notifikasi berhasil mendeteksi posisi simulasi.",
         cooldownSeconds: 60,
         showOnce: true,
         active: true,
@@ -3128,13 +3122,12 @@ export default function HomePage() {
     if (winner) {
       const actualWinner = winner as WarningEvent;
       setWarningPopup(actualWinner);
-      setActiveWarningId(actualWinner.areaId);
       if (functionalTestActiveRef.current) {
         functionalTestWarningIdsRef.current.add(actualWinner.areaId);
         updateFunctionalTestResult(
           "warning-engine",
           "passed",
-          `Geofence memicu toast "${actualWinner.areaName}".`
+          `Notifikasi "${actualWinner.areaName}" berhasil dipicu.`
         );
       } else {
         setWarningLog((prev) => [actualWinner, ...prev].slice(0, 15));
@@ -3396,7 +3389,6 @@ export default function HomePage() {
             timestamp: Date.now(),
           };
           setWarningPopup(finishPopup);
-          setActiveWarningId("finish-line");
           setWarningLog((prev) => [finishPopup, ...prev].slice(0, 15));
           void deliverSystemNotification(
             buildRunNotificationPayload({
@@ -3720,7 +3712,6 @@ export default function HomePage() {
     void startSession();
   };
 
-  const mapWarningAreas = track?.warningAreas ?? [];
   const pageReady = !loadingTrack && track;
   const activeToast = showPermissionSheet || startBlockInfo ? null : toastQueue[0] ?? null;
   const mapStatusLabel =
@@ -3833,8 +3824,6 @@ export default function HomePage() {
                   closestIndex={displayClosestIndex}
                   progressPercent={progress}
                   followUser={followUser}
-                  activeWarningId={activeWarningId}
-                  warningAreas={mapWarningAreas}
                   sessionFinishPosition={
                     session.status === "finished"
                       ? session.finishPosition
@@ -4039,18 +4028,6 @@ export default function HomePage() {
               <i className="legend-dot" style={{ backgroundColor: mapTheme === "dark" ? "#0ea5e9" : "#3b82f6" }} />
               Lintasan belum dilewati
             </span>
-            <span className="legend-item">
-              <i className="legend-dot" style={{ backgroundColor: "#06b6d4" }} />
-              Zona info
-            </span>
-            <span className="legend-item">
-              <i className="legend-dot" style={{ backgroundColor: "#f59e0b" }} />
-              Zona warning
-            </span>
-            <span className="legend-item">
-              <i className="legend-dot" style={{ backgroundColor: "#f43f5e" }} />
-              Zona critical
-            </span>
           </div>
         </section>
 
@@ -4142,10 +4119,10 @@ export default function HomePage() {
               className={`sheet-tab-btn ${activeTab === "warnings" ? "active" : ""}`}
               onClick={() => selectSheetTab("warnings")}
               aria-pressed={activeTab === "warnings"}
-              aria-label={`Zona peringatan${warningLog.length > 0 ? `, ${warningLog.length} riwayat` : ""}`}
+              aria-label={`Notifikasi peringatan${warningLog.length > 0 ? `, ${warningLog.length} riwayat` : ""}`}
             >
-              <AlertTriangle size={18} aria-hidden="true" />
-              <span>Zona</span>
+              <Bell size={18} aria-hidden="true" />
+              <span>Notifikasi</span>
               {warningLog.length > 0 && <span className="tab-count">{warningLog.length}</span>}
             </button>
             <button 
@@ -4323,12 +4300,12 @@ export default function HomePage() {
 
             {/* 2. WARNINGS LOG SECTION */}
             <div className={`panel-section section-warnings ${activeTab === "warnings" ? "mobile-active" : "mobile-hidden"}`}>
-              <div className="panel-section-title">Riwayat Deteksi Zona</div>
+              <div className="panel-section-title">Riwayat Notifikasi</div>
               <div className="history-list">
                 {warningLog.length === 0 ? (
                   <div className="empty-state">
-                    <Shield size={36} className="empty-icon-svg" />
-                    <span>Belum ada deteksi zona warning. Geofence aktif saat Anda berjalan mendekati area bahaya.</span>
+                    <Bell size={36} className="empty-icon-svg" />
+                    <span>Belum ada notifikasi. Peringatan akan muncul saat Anda mendekati area yang perlu diperhatikan.</span>
                   </div>
                 ) : (
                   warningLog.map((item) => {
@@ -4605,7 +4582,7 @@ export default function HomePage() {
                       <Volume2 size={18} className="setting-icon-inline" />
                       <span>Suara & Getar</span>
                     </strong>
-                    <span>Bunyikan notifikasi lokal dan pola getaran sesuai tingkat bahaya saat geofence terpicu.</span>
+                    <span>Bunyikan notifikasi lokal dan pola getaran saat peringatan jarak terpicu.</span>
                   </div>
                   <label className="toggle-switch">
                     <input 

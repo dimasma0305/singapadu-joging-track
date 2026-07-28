@@ -19,7 +19,7 @@ Mendeskripsikan rancangan implementasi aplikasi jogging web untuk skenario **sin
 - Satu halaman landing yang otomatis mengarah ke rute default.
 - Real-time navigation map, progress, metrik sesi, pause/resume, dan riwayat sesi.
 - Delapan checkpoint eksplisit; CP3, CP5, dan CP8 menyediakan tautan Street View.
-- Area warning berbasis kedekatan jarak terhadap zona.
+- Notifikasi peringatan berbasis kedekatan jarak terhadap area yang dikonfigurasi.
 - Offline-light / local-first behavior menggunakan `public/track.json` + `localStorage`.
 
 ## Non-goal (Untuk fase sekarang)
@@ -32,7 +32,7 @@ Mendeskripsikan rancangan implementasi aplikasi jogging web untuk skenario **sin
 - `app/page.tsx`
   - Orkestrasi state sesi, loading data track, geolocation lifecycle, hitung progress.
 - `app/components/TrackMap.tsx`
-  - Render peta Leaflet (client-only), rute, posisi pengguna, titik start/finish, dan zona warning.
+  - Render peta Leaflet (client-only), rute, posisi pengguna, dan titik start/finish tanpa visual zona warning.
 - `app/lib/track-utils.ts`
   - Helper geospasial (`haversine`, jarak kumulatif, durasi/pacing, resolve distance).
 - `public/track.json`
@@ -77,9 +77,10 @@ Mendeskripsikan rancangan implementasi aplikasi jogging web untuk skenario **sin
   - Pause membekukan metrik; resume memakai posisi terbaru sebagai baseline.
 - F04 Off-route & finish detection
   - Detections berbasis threshold dari konfigurasi track.
-- F05 Area warning proximity
+- F05 Notifikasi warning proximity
   - Trigger saat posisi masuk radius sesuai `triggerDistanceMeters`.
   - Cegah spam dengan `cooldownSeconds` dan `showOnce`.
+  - Area tidak digambar sebagai zona di peta; event ditampilkan sebagai toast dan, jika diizinkan, notifikasi sistem.
 - F06 Sesi lokal
   - Simpan histori sesi dan event warning ke localStorage.
 - F07 Checkpoint & Street View
@@ -97,7 +98,7 @@ Mendeskripsikan rancangan implementasi aplikasi jogging web untuk skenario **sin
 - Peta tampil penuh layar.
 - Posisi pengguna muncul dan diperbarui saat sesi berjalan.
 - Progress, jarak tempuh, dan pace tidak freeze.
-- Warning area muncul dalam <1s dari update lokasi dan tidak spam.
+- Notifikasi warning muncul dalam <1s dari update lokasi dan tidak spam.
 - Panel status/sesi tidak menghalangi interaksi peta utama.
 
 ## State dan Error Handling
@@ -107,7 +108,7 @@ Mendeskripsikan rancangan implementasi aplikasi jogging web untuk skenario **sin
 
 ## Implementasi Saat Ini (Checklist)
 - Track source: `public/track.json`.
-- Geofencing area warning: aktif di map + toast.
+- Proximity warning: aktif sebagai toast/notifikasi tanpa zona visual di peta.
 - Fullscreen map sudah aktif.
 - Smartphone mode sebagai mode primer (overlay minim dan panel bawah).
 

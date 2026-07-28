@@ -3,14 +3,8 @@
 import { useEffect, useMemo, useRef } from "react";
 import { Circle, MapContainer, Marker, Polyline, Popup, TileLayer, Tooltip, useMap } from "react-leaflet";
 import L from "leaflet";
-import type { SessionSample, Track, WarningArea } from "../lib/types";
+import type { SessionSample, Track } from "../lib/types";
 import { createGoogleStreetViewUrl, haversineMeters } from "../lib/track-utils";
-
-const warningStyles: Record<WarningArea["type"], { color: string; fillColor: string }> = {
-  info: { color: "#06b6d4", fillColor: "#0891b2" },
-  warning: { color: "#f59e0b", fillColor: "#d97706" },
-  critical: { color: "#f43f5e", fillColor: "#e11d48" },
-};
 
 function createBadgeIcon(label: string, color: string, pulse: boolean = false) {
   const pulseHtml = pulse 
@@ -53,8 +47,6 @@ type TrackMapProps = {
   closestIndex: number;
   progressPercent: number;
   followUser: boolean;
-  activeWarningId: string | null;
-  warningAreas: WarningArea[];
   sessionFinishPosition?: SessionSample | null;
   mapTheme?: "dark" | "light";
   isSheetCollapsed?: boolean;
@@ -172,8 +164,6 @@ export default function TrackMap({
   closestIndex,
   progressPercent,
   followUser,
-  activeWarningId,
-  warningAreas,
   sessionFinishPosition = null,
   mapTheme = "dark",
   isSheetCollapsed = false,
@@ -430,28 +420,6 @@ export default function TrackMap({
             </Marker>
           );
         })}
-
-      {/* Warning/Proximity Areas */}
-      {warningAreas.map((area) => {
-        const style = warningStyles[area.type] || warningStyles.info;
-        const isActive = area.id === activeWarningId;
-        return (
-          <Circle
-            key={area.id}
-            center={[area.center.lat, area.center.lng]}
-            radius={area.radiusMeters}
-            pathOptions={{
-              color: style.color,
-              fillColor: style.fillColor,
-              fillOpacity: isActive ? 0.3 : 0.15,
-              weight: isActive ? 4 : 2,
-              opacity: isActive ? 0.95 : 0.6,
-              dashArray: isActive ? "6, 6" : undefined,
-              className: `warning-area-circle ${area.type} ${isActive ? "active-geofence" : ""}`,
-            }}
-          />
-        );
-      })}
 
       {/* User Current Position */}
       {userPosition ? (
