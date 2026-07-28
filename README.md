@@ -86,6 +86,9 @@ npm test -- --runInBand
 npm run build
 ```
 
+Build default menghasilkan static export di `dist/` untuk hosting statis.
+Docker memakai `npm run build:server` agar tetap menghasilkan runtime Next.js.
+
 ## Deploy ke domain `joging.1pc.tf` (Traefik)
 
 - Build dan jalankan lewat `compose.yml`

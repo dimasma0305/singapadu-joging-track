@@ -1,6 +1,7 @@
 const isGitHubPages = process.env.GITHUB_PAGES === "true";
-const isSitesStaticExport = process.env.SITES_STATIC_EXPORT === "true";
-const isStaticExport = isGitHubPages || isSitesStaticExport;
+const isServerBuild = process.env.NEXT_SERVER_BUILD === "true";
+const isStaticExport = !isServerBuild;
+const usesDistExport = isStaticExport && !isGitHubPages;
 const repositoryName = process.env.GITHUB_REPOSITORY?.split("/")[1] ?? "";
 const isUserOrOrganizationSite = repositoryName.endsWith(".github.io");
 const basePath = isGitHubPages && repositoryName && !isUserOrOrganizationSite
@@ -18,7 +19,7 @@ const nextConfig = {
       }
     : {}),
   ...(isGitHubPages ? { basePath } : {}),
-  ...(isSitesStaticExport && !isGitHubPages ? { distDir: "dist" } : {}),
+  ...(usesDistExport ? { distDir: "dist" } : {}),
   env: {
     NEXT_PUBLIC_BASE_PATH: basePath,
   },

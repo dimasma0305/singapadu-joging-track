@@ -8,6 +8,7 @@
     "dev": "WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=true next dev",
     "dev:fast": "next dev",
     "build": "next build",
+    "build:server": "NEXT_SERVER_BUILD=true next build",
     "start": "next start",
     "lint": "next lint"
   },

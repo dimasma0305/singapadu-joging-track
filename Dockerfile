@@ -6,7 +6,7 @@ COPY package.json bun.lock ./
 RUN bun install
 
 COPY . .
-RUN bun run build
+RUN bun run build:server
 
 FROM oven/bun:1.2 AS runtime
 
@@ -14,6 +14,7 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV NEXT_SERVER_BUILD=true
 
 COPY --from=build /app/package.json ./
 COPY --from=build /app/next.config.mjs ./
